@@ -80,6 +80,29 @@ from datasets import load_dataset
 
 
 
+# ── 已知不可用的实例 ────────────────────────────────────────────────────
+# 判据：跑 gold patch（维护者的真实修复）都得不到 resolved。
+# 这类实例无论 Agent 做什么都拿不到分，留在集里只会稀释信号。
+#
+# ⚠️ 只对 holdout 生效，不对 dev 生效。
+#    因为 dev 那 25 条已经全部 gold 验证通过（S1: 25/25），里面没有坏的；
+#    而一旦把它加进 dev 的排除集，dev 的候选池会从 500 变成 499，
+#    同一个 seed 打乱 499 个和打乱 500 个结果完全不同 —— dev 会整体变，
+#    已经跑过的 S1-dev 就作废了。
+KNOWN_BAD = {
+    "django__django-13344":
+        "gold patch 下 FAIL_TO_PASS 2/2 通过（修复本身是对的），"
+        "但 PASS_TO_PASS 挂 2 条：test_touch (FileBasedCacheTests) 与 "
+        "test_expiration (DBCacheWithTimeZoneTests)。两条都是 "
+        "「设 N 秒超时 -> time.sleep(N+1) -> 断言已过期」的实时依赖测试。"
+        "已验证：孤立跑通过（7.1s）、基线跑完整 cache 套通过（481 条 / 13.3s），"
+        "但评测时套件变成 487 条 / 67.9s（test_patch 改了 tests/runtests.py）后失败。"
+        "两次独立运行结果完全一致，非 flaky，是判定不稳定。"
+        "对应 SWE-bench Verified 论文所述「61.1% 的单元测试会误杀正确解法」的残留。"
+        "2026-09-06 排除。",
+}
+
+
 def stratum(difficulty: str) -> str:
     """4 个难度标签压成 3 层。'>4 hours' 只有 3 条，合进 hard。"""
     if difficulty == "<15 min fix":
@@ -213,11 +236,17 @@ def build(quota, cap, out_path, exclude, seed):
         return flat
 
 def main():
+    # dev 的排除集必须保持为空 —— 见 KNOWN_BAD 上方的说明
     dev = build(quota={"easy": 8, "medium": 9, "hard": 8}, cap=3, out_path="subset_ids.txt",
                 exclude=frozenset(), seed=42)
     holdout = build(quota={"easy": 16, "medium": 18, "hard": 16}, cap=6, out_path="holdout_ids.txt",
-                    exclude=set(dev), seed=42)
-    assert set(dev) & set(holdout) == set()
+                    exclude=set(dev) | set(KNOWN_BAD), seed=42)
+
+    # 冗余检查。冗余正是它的价值：验证「我以为的机制真的生效了」
+    assert set(dev) & set(holdout) == set(), "dev 与 holdout 出现交集"
+    assert set(holdout) & set(KNOWN_BAD) == set(), "holdout 里混进了已知不可用实例"
+    print()
+    print(f"已排除 {len(KNOWN_BAD)} 条已知不可用实例: {sorted(KNOWN_BAD)}")
 
 if __name__ == "__main__":
     main()

@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | S0 | gold patch 冒烟 3 条 | ✅ 3/3 resolved |
 | S1-dev | gold patch 跑完整 dev 子集 25 条 | ✅ **25/25 resolved**，errors=0，1024s，$0 |
-| S1-holdout | gold patch 跑 holdout 50 条 | 🔄 进行中 |
+| S1-holdout | gold patch 跑 holdout 50 条 | ✅ **50/50 resolved**（剔除 1 条判定不稳定的实例后），258s，$0 |
 | S2 | mini-SWE-agent 基线，1 easy + 1 hard | ✅ 2/2 resolved，**$0.06** |
 | S3 | **自建 scaffold** | ⬜ **尚未开始** |
 | S4 | 两边各跑 dev 25 条对照 | ⬜ |
@@ -39,9 +39,14 @@ gold patch 是仓库维护者当年的真实修复，**它保证应该 resolved*
 不这么做的代价是具体的：写完 Agent 第一次跑出 `resolved = 0/25` 时，你面对**双重未知**
 （Agent 不行还是环境不行），而人的本能是去 debug 自己写的那部分。
 
-**这个判断在本项目第一天就被实证了** —— gold 冒烟还没跑到 SWE-bench 就抓出本机 Docker Desktop
+**这个判断在本项目第一天被实证了两次。**
+
+第一次：gold 冒烟还没跑到 SWE-bench 就抓出本机 Docker Desktop
 的挂载故障（dockerd 起得来但 `/var/lib/docker` 挂不上）。按「先写 Agent」的顺序，
 这个故障会在两周后以一个无法归因的 0/25 出现。实际代价：20 分钟，$0。
+
+第二次：holdout 的 50 条里有 1 条 gold patch 也过不了 —— 详见下面「一条被剔除的实例」。
+这条如果不在写 Agent 之前查出来，将来 Agent 在它上面失败会被归因成能力问题。
 
 官方 harness 自己也认这个区分 —— 评测报告里 `likely infrastructure failures` 与
 `ambiguous failures` 是独立于 `unresolved` 的计数字段。
@@ -92,6 +97,41 @@ holdout 从不参与迭代，所以它的分数没有被我调过。
 | easy | 3/8 = 37.5% | 6/16 = 37.5% |
 | medium | 3/9 = 33.3% | 6/18 = 33.3% |
 | hard | 3/8 = 37.5% | 6/16 = 37.5% |
+
+### 一条被剔除的实例 —— gold patch 验证真正抓到的东西
+
+用 gold patch 跑 holdout 第一版时，**有 1 条不 resolved**：`django__django-13344`。
+下面是排查过程，每一步都在排除一个假设：
+
+| 检查 | 结果 | 排除了什么 |
+| --- | --- | --- |
+| FAIL_TO_PASS | **2/2 通过** | 修复本身是对的 |
+| PASS_TO_PASS | 354/356，挂 `test_touch`、`test_expiration` | 问题在「有没有改坏别的」 |
+| 换 `-j 1` 单独重跑 | 同样两条挂，两次结果完全一致 | **不是并行争抢导致的 flaky** |
+| 容器里实测 `sleep 2` | wall / monotonic 都走 2.0s | **不是 WSL2 时钟漂移** |
+| 容器时区 | `Etc/UTC` | **不是时区问题** |
+| 孤立跑这两条 | 通过，7.1s | 测试本身没毛病 |
+| 基线（无 patch）跑完整 cache 套 | 通过，481 条 / 13.3s | **不是环境坏** |
+| 评测时 | 挂，487 条 / 67.9s（test_patch 改了 `tests/runtests.py`） | ← 差异在这里 |
+
+两条失败的测试都是「设 N 秒超时 → `time.sleep(N+1)` → 断言已过期」的**实时依赖**写法。
+而这条实例本身是关于 **ASGI 中间件协程**的（gold patch 改的是 `middleware/cache.py`、
+`middleware/security.py`、`sessions/middleware.py`），**与缓存过期语义毫无关系**。
+
+**结论：判定不稳定，既不是环境问题也不是能力问题。**
+这正对应 SWE-bench Verified 论文所述「**61.1% 的单元测试会误杀正确解法**」的残留 ——
+Verified 已经筛掉了大部分，但 PASS_TO_PASS 里带 `time.sleep` 的测试本质上就是脆弱的。
+
+**处理**：写进 `make_subset.py` 的 `KNOWN_BAD`（附完整原因与全部证据），重新抽样，重跑 → **50/50**。
+
+> ⚠️ `KNOWN_BAD` **只作用于 holdout，不作用于 dev**。
+> 因为 dev 那 25 条已全部 gold 验证通过，里面没有坏的；而一旦把它加进 dev 的排除集，
+> 候选池会从 500 变成 499，同一个 seed 打乱 499 个和 500 个的结果完全不同 ——
+> dev 会整体变动，已经跑过的 S1-dev 就作废了。
+>
+> 排除 1 条最终连带换掉了 4 条（池子变了，贪心扫描的结果跟着变），46 条不变。
+> 只变 4 条而非全变，是因为 **cap 让抽样部分地与顺序无关**：某仓库在某层内条数 ≤ cap 时，
+> 它的全部实例必然入选，与打乱顺序无关。变动只发生在 django、sympy 这些远超 cap 的大仓库上。
 
 ---
 
