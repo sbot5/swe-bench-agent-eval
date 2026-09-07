@@ -64,6 +64,7 @@
 """
 from enum import StrEnum, auto, unique
 from dataclasses import dataclass, field
+from typing import Self
 
 class ToolStatus(StrEnum):
     """工具有没有完成它的活。不是「好消息 / 坏消息」。
@@ -185,3 +186,47 @@ class Observation:
                 raise ValueError("Next action is empty")
             if self.failure_category is None:
                 raise ValueError("Failure category is empty")
+
+    @classmethod
+    def ok(cls, next_actions: list[str] | None = None, *, summary: str, content: str) -> Self:
+        """造一个「工具正常完成」的观察。
+
+        不收 status（函数名就是 status），更关键的是不收 failure_category ——
+        后者是这个构造器存在的全部理由。__post_init__ 的两条不变量只管
+        status == ERROR 那个分支，所以 Observation(status=OK, failure_category=IO_ERROR)
+        在那里完全合法，会静静进归因表。签名里没有这个参数，它就造不出来。
+
+        next_actions 可选但保留：成功也可能有下一步 —— read_file 读了 40 行、
+        截断了，观察是 OK，但要告诉模型「还有 60 行，用 offset=450 继续读」。
+
+        默认值走哨兵（None -> 函数体里换成新的空列表），不能直接写 `= []`：
+        普通函数的默认值只在 def 那一行求值一次，之后所有调用共用同一个 list。
+        dataclass 字段会拒绝这种写法（ValueError），普通函数和 classmethod 不会。
+
+        summary / content 在裸 * 后面，强制关键字传参。理由：两个都是 str，
+        位置写反了 Python 不报错、Pylance 不报错、运行时也不报错 —— 模型收到
+        一行 60 字的「摘要」和 6 个字的「正文」。
+        判据：能位置传的参数，类型必须互不混淆。
+        """
+        next_actions = next_actions or []
+        return cls(status=ToolStatus.OK, summary=summary, content=content, next_actions=next_actions)
+
+    @classmethod
+    def error(cls, failure_category: FailureCategory, next_actions: list[str], *, summary: str, content: str) -> Self:
+        """造一个「工具没能完成」的观察。
+
+        一个默认值都没有 —— 这是它和 ok() 最大的区别。「必填」在 Python 里只有
+        一种实现：不给默认值。少传就是 TypeError，Pylance 在敲代码时就画红线。
+        目的就是把 __post_init__ 的运行时检查提前到编辑期。
+
+        两层防线不重复，各管一段：
+            签名（无默认值 + *）   传没传、有没有传错位置    TypeError    敲代码时
+            __post_init__         传的内容对不对（非空）    ValueError   运行时
+        error(cat, [], ...) 会通过签名检查 —— Python 没有「非空列表」这个类型。
+        所以类 docstring 决定四那条不变量，签名替代不了，必须留着。
+
+        failure_category 排在 next_actions 之前：读一个调用点时最先要知道的是
+        「出了什么问题」，类别是这个错误的身份，next_actions 是对策。
+        summary / content 关键字传参，理由同 ok()。
+        """
+        return cls(status=ToolStatus.ERROR, failure_category=failure_category, next_actions=next_actions, summary=summary, content=content)
