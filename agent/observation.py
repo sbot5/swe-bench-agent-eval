@@ -62,9 +62,30 @@
    规矩：is 只用于 None 和单例（Enum 成员）；跟字面量比较一律用 ==；
    判空直接判真假值（not [] / not None / not "" 都是 True）。
 """
-from enum import StrEnum, auto, unique
 from dataclasses import dataclass, field
-from typing import Self
+from enum import StrEnum, auto, unique
+from typing import Final, Self
+
+# render() 渲染 content 时的截断阈值，单位是字符。
+#
+# 取 10000 是为了和 mini-swe-agent 对齐（.venv/.../minisweagent/config/
+# benchmarks/swebench.yaml:136 用的同一个数），不是因为 10000 最优 ——
+# 是为了控制变量。我相对 baseline 已经有三个实验变量（summary、结构化
+# next_actions、failure_category），再多一个「阈值不同」，S4 的 resolved 率
+# 变化就分不清是哪个改动带来的。先对齐，等归因表出来再动它。
+#
+# 三个候选理由，用 baseline 的 89 步真实数据检验过：
+#   上下文窗口   排除。一条实例累计观察约 78K 字符 ≈ 20K token【推算 4 字符/token】，
+#                57 步跑完约 25-30K token，任何现代上下文都放得下。
+#   成本         成立，且比表面重：观察进了 messages 之后，后续每一次 API 调用
+#                都要整个重发一遍。第 5 步的一条 10K 字符观察会被计费 52 次。
+#                一条观察的代价是「大小 × 剩余步数」，越早出现的大观察越贵。
+#   注意力稀释   定性但真实，改阈值跑同一子集就能测 —— 留到 S4 之后。
+#
+# 观察大小分布（54 条，两条 baseline 实例）：
+#   中位数 1406 / p75 4833 / p90 8369 字符。阈值 10000 时触发率 7.4%。
+#   ⚠️ 这份分布的右尾被 mini 自己的 10000 阈值截过，看不到原始输出能有多大。
+MAX_CONTENT_CHARS: Final = 10000
 
 class ToolStatus(StrEnum):
     """工具有没有完成它的活。不是「好消息 / 坏消息」。
@@ -293,8 +314,9 @@ class Observation:
         )
 
         if self.content:
+            result = _truncate(self.content, MAX_CONTENT_CHARS)
             parts.append(
-                f"<content>\n{self.content}\n</content>"
+                f"<content>\n{result}\n</content>"
             )
 
         if self.next_actions:
@@ -307,3 +329,56 @@ class Observation:
             )
 
         return "\n".join(parts)
+
+def _truncate(text: str, limit: int) -> str:
+    """保留头尾，丢掉中段，在中间留一条说明。返回新字符串。
+
+    决定一：模块级函数，不是 Observation 的方法
+    理由：它只依赖传进来的 text 和 limit，读不到任何 self 字段 —— 用不到 self
+          的方法就不该是方法。反面是 Enum 里那条：方法体里没有 self 一定写错了。
+          第二个理由是可测试性：limit 显式传参，测边界时传 limit=10 就行，
+          不用为了走一次截断路径去造一个一万字符的字符串。
+          常量在 render() 的调用点传进来。
+
+    决定二：头 + 尾，不是只截头也不是只截尾
+    理由：不同工具的关键信息位置不同 —— read_file 头重要（指定了范围），
+          run_tests 尾重要（测试摘要和失败列表在最后），search_code 头重要。
+          而 render() 不知道这条观察是哪个工具产生的，也不该知道（那要加字段，
+          加字段要先有消费者）。头+尾是「不知道关键信息在哪」时的稳妥解。
+
+    决定三：说明只写「丢了多少」，不写「怎么继续读」
+    理由：这个函数不知道该建议 offset=450 还是 tail -50 —— 那是工具的知识。
+          具体的续读调用由工具写进 next_actions。每一层只写自己知道的东西。
+
+    早返回不是优化，是正确性的一部分：
+        limit >= len(text) 时头尾会重叠，text[:half] 和 text[-half:] 会包含
+        同一批字符，整段被输出两遍。而短文本是多数情况（中位数 1406），
+        没有早返回会污染一半的观察。
+    同理 half == 0 时（limit 是 0 或 1）必须特判：text[-0:] 等于 text[0:]，
+        返回整个字符串 —— 负零不是负数。
+
+    ⬜ 记一笔：字符截断会切在行中间，头尾各有半行。mini 也不对齐，按控制变量
+       先不动。如果 S4 归因表里出现「模型读到半行代码后误判」，那就是调它的依据。
+    """
+    if limit < 0:
+        raise ValueError("Limit must be non-negative")
+
+    if len(text) <= limit:
+        return text
+
+    half = limit // 2
+    head = text[:half]
+    tail = text[-half:] if half else ""
+
+    middle = text[half:-half] if half else text
+
+    omitted_chars = len(middle)
+    omitted_lines = len(middle.splitlines())
+
+    notice = (
+        f"\n\n[TRUNCATED: omitted {omitted_chars} chars "
+        f"/ {omitted_lines} lines; kept {half} chars from head "
+        f"and {half} chars from tail]\n\n"
+    )
+
+    return head + notice + tail
