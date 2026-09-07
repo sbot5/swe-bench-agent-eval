@@ -53,8 +53,17 @@
    对所有成员恒返回 True（or 是取值运算不是比较，且方法体没用到 self）。
    归因表会说「全是环境问题」—— 同样不报错，同样全错。
    检查项：Enum 方法体里没有出现 self，这个方法一定写错了。
+
+4. Observation 的 __post_init__ 连踩三次同一片区域，三次都不报错也不警告，
+   只是条件恒真或恒假：
+       `True if A or B else False`  —— or 是取值运算，不是「或者等于」
+       `x is [] or None`            —— is 比身份不比值；且 or 不会把左边的比较分配过去
+       `x is not []`                —— `not X` 和 `X is not Y` 是两个不同的 not
+   规矩：is 只用于 None 和单例（Enum 成员）；跟字面量比较一律用 ==；
+   判空直接判真假值（not [] / not None / not "" 都是 True）。
 """
 from enum import StrEnum, auto, unique
+from dataclasses import dataclass, field
 
 class ToolStatus(StrEnum):
     """工具有没有完成它的活。不是「好消息 / 坏消息」。
@@ -102,3 +111,77 @@ class FailureCategory(StrEnum):
 
     def is_env_error(self) -> bool:
         return self in { FailureCategory.IO_ERROR, FailureCategory.TIMEOUT }
+
+@dataclass(frozen=True)
+class Observation:
+    """所有工具的统一返回形状。
+
+    模型对这个世界的全部认知，就是这东西渲染出来的字符串的累加 —— 它看不见
+    文件系统、看不见容器、看不见 Python 对象，只看得见 messages。所以这不是
+    一个数据结构文件，是我和模型之间唯一的那根管子。
+
+    五个字段分属两个读者，判据不同：
+        summary / content / next_actions   渲染成文本给模型 ——
+                                           标准：只读这一段能不能定下一步
+        status / failure_category          序列化进 trajectory 给我 ——
+                                           标准：三周后不看代码能不能读出为什么失败
+
+    决定一：dataclass，不用 Pydantic
+    理由：判据是信任边界。Pydantic 的运行时校验防的是外部输入 —— AgentConfig
+          用它，是因为 .venv/.../minisweagent/agents/default.py:41 那行的 kwargs
+          来自 YAML 配置文件。Observation 是
+          我的代码造、我的代码消费，不跨边界。防我自己写错的是类型检查器 +
+          __post_init__，不是运行时校验。
+    否决：· Pydantic —— 一次运行造几千个，为用不上的能力付运行时开销
+          · 裸 dict（mini 循环里的写法）—— 强制不了下面那两条不变量。
+            mini 的目标是「极简」，我的目标是「归因数据可信」。
+    代价：没有 model_dump_json。实测不成立 —— asdict() + json.dumps() 两行，
+          StrEnum 本身就是 str，直接出可读 JSON。
+
+    决定二：frozen=True
+    理由：没有任何一处需要在创建之后修改它 —— 工具造好就交出去，loop 只读它
+          渲染，归因脚本只读它统计。而它是 trajectory 的数据源，数据源被中途
+          改写是最难查的一类 bug。
+    否决：可变 dataclass —— 省下的是 dataclasses.replace() 那一行，换来的是
+          「谁在什么时候改过它」这个永远查不清的问题。
+    代价：__post_init__ 里只能检查并 raise，不能顺手规范化字段值。
+
+    决定三：只有 failure_category 带 | None
+    理由：| None 不是「可选参数」的写法，是一句语义声明 —— 它多加一个「不存在」
+          状态，那就必须答得出谁会对这个状态分支。
+              failure_category   None = 没失败，归因脚本和不变量都分支 -> 留
+              summary / content  None 和 "" 没区别，没人分支           -> 必填
+              next_actions       None 和 [] 没区别，没人分支            -> 默认空列表
+    否决：四个字段全 | None（第一版的写法）—— 等于允许某个工具返回一个模型
+          读不懂的观察。
+
+    决定四：不变量在构造时炸，不在使用时检查
+    理由：给模型的那三个字段写砸了有实时反馈（模型下一轮就走偏，当场看得见）；
+          给我的那两个没有 —— 要等 25 条跑完、打开归因表、发现一半是空的才
+          知道，那时候钱和时间都花完了。
+              error -> failure_category 必须有（否则归因表少一行）
+              error -> next_actions 必须非空（否则模型收到「失败了，没了」，
+                       在原地空转到烧光 step_limit）
+    """
+
+    status: ToolStatus
+    """工具有没有完成它的活。loop 就靠它二分。"""
+
+    summary: str
+    """一行说清发生了什么。模型只读这一行也该知道个大概。"""
+
+    content: str
+    """正文，可能被截断。截断说明必须写在这里面 —— 不设 truncated 字段。"""
+
+    next_actions: list[str] = field(default_factory=list)
+    """下一步能做什么。error 时必须非空 —— 错误契约三件套的落点。"""
+
+    failure_category: FailureCategory | None = None
+    """归因表的行标签。成功时为 None，error 时必填。"""
+
+    def __post_init__(self):
+        if self.status == ToolStatus.ERROR:
+            if not self.next_actions:
+                raise ValueError("Next action is empty")
+            if self.failure_category is None:
+                raise ValueError("Failure category is empty")
