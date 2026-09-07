@@ -188,7 +188,7 @@ class Observation:
                 raise ValueError("Failure category is empty")
 
     @classmethod
-    def ok(cls, next_actions: list[str] | None = None, *, summary: str, content: str) -> Self:
+    def ok(cls, *, summary: str, content: str, next_actions: list[str] | None = None) -> Self:
         """造一个「工具正常完成」的观察。
 
         不收 status（函数名就是 status），更关键的是不收 failure_category ——
@@ -203,16 +203,22 @@ class Observation:
         普通函数的默认值只在 def 那一行求值一次，之后所有调用共用同一个 list。
         dataclass 字段会拒绝这种写法（ValueError），普通函数和 classmethod 不会。
 
-        summary / content 在裸 * 后面，强制关键字传参。理由：两个都是 str，
-        位置写反了 Python 不报错、Pylance 不报错、运行时也不报错 —— 模型收到
-        一行 60 字的「摘要」和 6 个字的「正文」。
-        判据：能位置传的参数，类型必须互不混淆。
+        全部参数都在裸 * 后面，强制关键字传参。两个理由：
+        · summary 和 content 都是 str，位置写反了 Python 不报错、Pylance 不报错、
+          运行时也不报错 —— 模型收到一行 60 字的「摘要」和 6 个字的「正文」。
+          判据：能位置传的参数，类型必须互不混淆。
+        · 关键字区里参数顺序完全自由（位置区有「无默认值不能跟在有默认值后面」
+          这条硬规则，关键字区没有）。所以这里能排成
+          summary -> content -> next_actions，和字段声明顺序、和 render() 的
+          输出顺序完全一致 —— 四处对齐，读代码不用换脑子。
+          第一版把 next_actions 放在位置区（因为它有默认值，只能排 * 之前），
+          结果它被迫排在 summary 前面，和另外三处都对不上。
         """
         next_actions = next_actions or []
         return cls(status=ToolStatus.OK, summary=summary, content=content, next_actions=next_actions)
 
     @classmethod
-    def error(cls, failure_category: FailureCategory, next_actions: list[str], *, summary: str, content: str) -> Self:
+    def error(cls, failure_category: FailureCategory, *, summary: str, content: str, next_actions: list[str]) -> Self:
         """造一个「工具没能完成」的观察。
 
         一个默认值都没有 —— 这是它和 ok() 最大的区别。「必填」在 Python 里只有
@@ -225,8 +231,79 @@ class Observation:
         error(cat, [], ...) 会通过签名检查 —— Python 没有「非空列表」这个类型。
         所以类 docstring 决定四那条不变量，签名替代不了，必须留着。
 
-        failure_category 排在 next_actions 之前：读一个调用点时最先要知道的是
-        「出了什么问题」，类别是这个错误的身份，next_actions 是对策。
-        summary / content 关键字传参，理由同 ok()。
+        failure_category 是唯一的位置参数，排最前。三个理由叠在一起：读一个调用点
+        时最先要知道的就是「出了什么问题」；它是唯一不会和别人混淆的类型
+        （FailureCategory，不是 str）；而且它根本不进 render()，没有渲染顺序要对齐。
+
+        其余三个在 * 后面强制关键字传参，排成 summary -> content -> next_actions，
+        和字段声明、和 render() 输出一致。理由同 ok()。
+        注意 next_actions 在关键字区仍然是必填的（无默认值）—— 关键字区允许必填
+        和带默认值的参数混排，位置区不允许。
         """
         return cls(status=ToolStatus.ERROR, failure_category=failure_category, next_actions=next_actions, summary=summary, content=content)
+
+    def render(self) -> str:
+        """拼成模型真正读到的那段文本。模型对世界的全部认知就是这个的累加。
+
+        决定一：只渲染 summary / content / next_actions 三个字段
+        理由：读者只有模型，逐个问「它会因为这个字段做出不同的动作吗」。
+              failure_category 不渲染 —— 它的消费者是归因脚本；模型需要的信息
+              已经在 summary 和 next_actions 里。渲染出去还有个风险：模型会对我的
+              内部标签做模式匹配，而这套标签还在演化，UNCLASSIFIED 喂过去是纯噪音。
+        🔴 待定：status 要不要渲染，推迟到六个工具的 summary 写完再定。
+              如果每条 summary 都以「失败：」开头，status 就是冗余；如果 summary
+              是自由文本，status 给模型一个稳定的机器可读锚点。
+              判据依赖还没写的代码，所以现在不定。
+
+        决定二：XML 标签分隔
+        理由：标签的作用是让模型可靠分辨「哪段是工具输出、哪段是我的话」。
+              content 里会出现各种代码和符号，markdown 的三反引号很可能和 content
+              里的代码块打架，XML 标签撞车概率低得多。
+              旁证：mini-swe-agent 的 observation_template 也用 XML，见
+              .venv/.../minisweagent/config/benchmarks/swebench.yaml:131 ——
+              那就是跑出我 baseline 的那份配置。样本只有 2 条，不算强证据。
+        标签名和字段名保持一致：trajectory 里的 JSON 键和渲染出的标签一一对上，
+        做归因时不用在脑子里做映射。
+
+        决定三：顺序 summary -> content -> next_actions
+        理由：summary 必须第一 —— 它的全部价值是「只读第一行就知道大概」，
+              放中间就没意义了。next_actions 放最后 —— 模型读完立刻要用它。
+              content 最长，放中间。
+              （「长上下文里中间的信息容易被忽略」是个有研究支持、但我没开原文核对的
+              说法【未核实】，而且那讲的是几千到几万 token 的场景；上面两条理由不依赖它。）
+        这个顺序和字段声明、和 ok()/error() 关键字区的参数顺序一致 —— 四处对齐。
+
+        决定四：空段落整段不渲染，不输出空标签
+        理由：<content></content> 对模型没有信息量，只是两行噪音。
+        代价：输出格式不恒定，模型得自己判断这次有没有 content。
+
+        决定五：段间分隔符统一交给最外层的 join，任何段落自己不带尾部换行
+        理由：第一版把换行塞进了 summary 那段 f-string 的末尾，于是「summary 之后」
+              有空行、「content 之后」没有 —— 间距取决于哪些段落存在。
+              分隔符属于 join，不属于元素。
+              这个 bug 只在「三段都在」时才露出来，而验收里那两个用例都没覆盖到。
+              教训：两个可选段落 = 4 种组合，组合类的东西要枚举组合，
+              不能只测典型情况。
+
+        ⬜ 还没做：截断。content 超长时的头/尾保留策略是下一块。
+        """
+        parts = []
+        parts.append(
+            f"<summary>\n{self.summary}\n</summary>"
+        )
+
+        if self.content:
+            parts.append(
+                f"<content>\n{self.content}\n</content>"
+            )
+
+        if self.next_actions:
+            actions = "\n".join(
+                f"- {action}" for action in self.next_actions
+            )
+
+            parts.append(
+                f"<next_actions>\n{actions}\n</next_actions>"
+            )
+
+        return "\n".join(parts)
