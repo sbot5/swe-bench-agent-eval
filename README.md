@@ -19,12 +19,13 @@
 | S1-dev | gold patch 跑完整 dev 子集 25 条 | ✅ **25/25 resolved**，errors=0，1024s，$0 |
 | S1-holdout | gold patch 跑 holdout 50 条 | ✅ **50/50 resolved**（剔除 1 条判定不稳定的实例后），258s，$0 |
 | S2 | mini-SWE-agent 基线，1 easy + 1 hard | ✅ 2/2 resolved，**$0.06** |
-| S3 | **自建 scaffold** | 🟡 **进行中** —— `agent/observation.py` 完成（384 行，23 条决定内嵌 docstring，设计档案见 [`docs/DESIGN-observation.md`](docs/DESIGN-observation.md)）。下一步 `environment.py` |
+| S3 | **自建 scaffold** | 🟡 **进行中 2/4** —— `observation.py` 384 行（[设计档案](docs/DESIGN-observation.md)）· `environment.py` 441 行、行为验收 22/22（[设计档案](docs/DESIGN-environment.md)）。下一步 `tools.py` 六个工具，`read_file` 打头 |
 | S4 | 两边各跑 dev 25 条对照 | ⬜ |
 | S5 | 冻结后跑 holdout 50 条，出归因表 | ⬜ |
 
-> ⚠️ **诚实说明：scaffold 还没写。** 现在仓库里有的是评测基础设施、固定的评测集、
-> 和已经量出来的基线数字。Agent 本体是下一步。
+> ⚠️ **诚实说明：scaffold 只写了一半。** 已完成的是观察契约（`observation.py`）和
+> 执行层（`environment.py`），两者都有行为验收和设计档案。**六个工具和 ReAct 循环还没写，
+> 所以还没有任何 resolved 率数字。** S4 之前，本仓库能证明的只是评测基础设施可信。
 
 ---
 
