@@ -115,8 +115,8 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 （§六「`:=` 优先级」早有记录，第二次踩）② 定义 `arg_ctx`、使用 `args_ctx`，`NameError`；首次改名只改了定义处，引用处漏改
 —— 两个 bug 叠加时①把②遮住（非法输入永远在第 1 步返回），合法输入跑一次才露出来（教训 1）。
 | 5 | `stdout.split("\0")[:-1]` 得到相对仓库根的文件列表；为空 → ok 并说明（L9） | — | ✅ 09-15 **Claude 写**（同 read_file 第 5 步的 `[:-1]`）；冒烟：`astropy.egg-info`、新建空目录 → ok + 两条 next_actions |
-| 6 | 按 depth 聚合：深度相对 `path` 计；目录行带其下文件总数；超预算则 depth − 1 重算，到 1 仍超则按预算截条目（L2） | — | ⬜ |
-| 7 | 组装 `Observation.ok`：降过深度或截过条目，summary 写明，next_actions 指向对子目录再调 | — | ⬜ |
+| 6 | 按 depth 聚合：深度相对 `path` 计；目录行带其下文件总数；超预算则 depth − 1 重算，到 1 仍超则按预算截条目（L2） | — | ✅ 09-15：`_aggregate` 与降深度循环**本人**（4 版，bug 见 §五）；depth=1 截条目分支 **Claude 写**（同 read_file 决定 19） |
+| 7 | 组装 `Observation.ok`：降过深度或截过条目，summary 写明，next_actions 指向对子目录再调 | — | ✅ 09-15 **Claude 写**；验收 21/21 见 §六 |
 
 #### 决策清单
 
@@ -124,13 +124,14 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 | --- | --- | --- | --- |
 | L1 | `depth` 默认 **2**，**不设硬上限**，复用 `_validate_positive_int` | 根目录 depth=2 三个仓库都装得下（django 5763 字符），depth=3 三个全爆（17818–61704）；固定上限两头不讨好：2 在子目录不够（`astropy/io` 合理用 3），3 在根目录必爆 —— 超预算交给 L2 | 硬上限 3 · 默认 1（根目录第一次调用必然还要再调） |
 | L2 | 超 `MAX_CONTENT_CHARS` → **自动降 depth** 直到装下，summary 写明「请求 N，实际 M」；depth=1 仍超才按预算截条目并写明省略数 | 降深度保住全局形状，截条目会让排在后面的目录整个消失；最大单目录直接子项 281（django `docs/releases/`），depth=1 截条目的分支实际很难触发 | 截条目 · 报 error（模型没做错事） |
-| L3 | **每个目录行带其下文件总数**：`astropy/io/  (364 files)` | 「这里很多」是决定下一步钻哪里的信息；一条规则覆盖所有目录，不区分是否在深度边界（比只给边界目录少一个分支） | 只列名字 · 只给边界目录计数 |
+| L3 | **每个目录行带其下文件总数**：`astropy/io/ (364 files)`（单数也写 `files`，不为此加分支） | 「这里很多」是决定下一步钻哪里的信息；一条规则覆盖所有目录，不区分是否在深度边界（比只给边界目录少一个分支） | 只列名字 · 只给边界目录计数 |
 | L4 | 数据源 `git ls-files --cached --others --exclude-standard`，加 **`-z`** 和 **`--literal-pathspecs`** | `find` 会列出 astropy 64 个构建产物（`.so`、生成的 `.c`、egg-info）；`--others` 让 agent 新建的文件可见；默认输出把 `é.py` 转义成 `"astropy/\303\251.py"`、含换行的文件名也会被转义，`-z` 才是原文；pathspec 默认按通配解释，列 `[x]` 会把同级文件 `x` 一起带出来 | `find` + 手写排除（排除规则补不全） · 不加 `-z` · 不加 `--literal-pathspecs` |
 | L5 | shell 只列，**聚合在 Python**；命令不用管道；守卫 `test -e \|\| exit 90`（复用 `_EXIT_NOT_FOUND`）、`test -d \|\| exit 92` | 满足 §七 义务「不用管道」；聚合逻辑能单测；django 6649 行 stdout 对 subprocess 不是负担（`environment.py` 不截 stdout） | `git … \| awk` 聚合 |
 | L6 | **不接收 pattern / glob 参数**；与 `search_code` 分工 = 按路径看结构 vs 按内容找 | 存在理由：还不知道搜什么关键词时认识仓库；`read_file` 的 `PATH_NOT_FOUND` / 是目录两条 next_actions 已指向它。加 glob 就和搜索重叠 | 加 glob 参数 |
 | L7 | 每行一个**相对 `/testbed` 的完整路径**，目录带 `/`，按路径排序 | 模型可直接复制进 `read_file`，不必从缩进拼路径 | tree 式缩进 |
 | L8 | `path` 默认 `"."` | 与 read_file 决定 3 同理：最常见的调用是「先看看仓库长什么样」；`_validate_legal_path(".")` 归一化为 `/testbed`，无需特判 | 不给默认值 |
 | L9 | 路径是文件（exit 92）→ `INVALID_ARGUMENT`，next_actions 指向 `read_file`；目录下无可列文件（全被 ignore，如 `astropy.egg-info`，exit 0 空输出）→ **ok** 并说明 gitignore 的内容不显示 | 与 read_file 决定 16 对称；空结果模型没做错事，但要告诉它「空」的原因，否则会以为目录真的空 | `IS_A_FILE` 新枚举 · 空结果报 error |
+| L10 | **（09-15 本人定）** 第 6 步的聚合抽成纯函数 `_aggregate(files, base, depth) -> list[str]`，不碰容器 | L2 降深度要按不同 depth 反复重算，本来就要调多次；纯函数不经 `env` 就能单测，`test_tools.py`「真容器 vs 假 exec」对这部分不成立 | 聚合内联在 `list_files` 的循环体里 |
 
 已知边界：工作区里删掉但未提交的已跟踪文件，`--cached` 仍会列出（§六实测）；模型随后 `read_file` 得到 `PATH_NOT_FOUND`，
 next_actions 引它重新 list。危害低，不处理。
@@ -187,6 +188,7 @@ next_actions 引它重新 list。危害低，不处理。
 | 原判断 | 实际 | 结论 |
 | --- | --- | --- |
 | 09-14 规格写「django 递归到底是几万个文件，一次就能打满上下文」 | 09-15 进 django-15863 容器实测：`git ls-files` **6649** 个，含忽略文件 6657 个 | 「打满上下文」的结论不变（depth=3 就 61704 字符），但依据改用实测数（§六），决定见 L1–L2 |
+| 09-15 §六「仓库规模」记 django 根目录 depth=1 30 条、depth=2 300 条 | 当时的 awk 统计没加 `-z`：非 ASCII 文件名被转义成 `"django/…` 开头，多出假的顶层条目。加 `-z` 后实测 **29 / 298** 条；带计数后缀 depth=2 为 8303 字符 | §六 原行保留作对照，以验收行的数为准。L4 加 `-z` 的理由又多一条实证 |
 | 09-14 把 D3（读法）、D4（不存在 vs 是目录）当作悬置，推荐「`cat` 全文 + Python 切片」、区分失败「只能看 stderr 或先 `test -f`」 | `DESIGN-environment.md` §五 09-08 已有结论：awk `NR` 数行正确；前置 `test` 守卫 + 自定义退出码（90+），不解析文本。Claude 没回查设计档案就出题 | 以 09-08 结论为准。补充：WSL 宿主机上 `cat` 对不存在和是目录**都是 exit 1**（09-08 记录的是 2，命令不同），同样说明退出码分不开 |
 | 决定 4 起初表述成「limit 要不要设上限」 | 读了 `_truncate` 决定三才发现真正的问题是「超长内容由谁截」：render 丢中段，工具给的续读行号失效 | 改问法后选 (b) 按字符预算截停 |
 
@@ -258,7 +260,21 @@ next_actions 引它重新 list。危害低，不处理。
     验收脚本第一轮在 `setup.py` 60/20 和 fits 单行两条上抓到（`返回 Observation（实际 NoneType）`）。
     对策：验收脚本对每条用例都先查 `isinstance(obs, Observation)`；**有返回值的函数，每个 `if` 都问一句「不成立时去哪」**
 
-### 教训（5 条）
+### list_files 第 6 步代码 bug（09-15，本人版 4 版审稿）
+
+| # | 版 | bug | 为什么没报错 / 怎么抓到 |
+| --- | --- | --- | --- |
+| 1 | `_aggregate` v1 | 标注写 `List[str]`，没 import → **整个模块 import 失败**（read_file 一起挂） | ruff F821；标注在 def 时求值 |
+| 2 | v1 | `path.endwith("/")` 拼错 → `AttributeError` | ruff 不知道 `path` 是 str，**只有跑才暴露** |
+| 3 | v1 | 每个文件只取最深一截 `parts[:take]`，中间层目录丢失（`a/ (4 files)` 不出现），违反 L3 | 不报错；手写 7 个文件的列表跑一次才看出少行 |
+| 4 | v1 | 目录行用 `{path!r}` 带引号，模型照抄进工具即 `PATH_NOT_FOUND`，违反 L7 | 不报错；`!r` 适合报错里显示收到的值，不适合给模型复制的输出 |
+| 5 | v2 | 漏 `return result` → 返回 `None` | ruff 不报；调用方 `"\n".join(None)` 才会炸 |
+| 6 | 循环 v1 | 条件写成 `depth * len(...)`（照抄小例子 `size * len(text)`）→ django depth=2 的 8303 字符被判超预算，降到 1 | astropy 2×2965 仍在预算内，**小仓库测不出** |
+| 7 | 循环 v1 | `depth -= 1` 改掉参数，第 7 步拿不到请求值 | 不报错；summary「请求 N 实际 M」写不出 |
+| 8 | 循环 v2 | `used_depth = depth - 1` 每轮从请求值重算 + 条件仍判 `depth > 1` → **死循环**（django 请求 4：4→3→3→3…） | 请求 3 时降一次就装下，**没有「要降两次」的用例** |
+| 9 | 循环 v3 | 条件仍判 `depth > 1`（`used_depth` 已正确递减）→ depth=1 仍超预算时降到 **0**，`_aggregate` 返回 `[]`，模型收到空目录 | 不报错不卡住；三仓库单目录直接子项最多 281，**只有假 exec 平铺 1500 个文件才触发** |
+
+### 教训（6 条）
 
 1. **恒真/恒假条件累计第 4、5 次**（接 `DESIGN-environment.md` 第 7 条）。对策：**每个守卫都要用合法输入测一次**，不只测它该拦的
 2. **取反别手写。** 先正着写 `inside = ...`，再 `if not inside:`，让 Python 替你做德摩根
@@ -266,6 +282,8 @@ next_actions 引它重新 list。危害低，不处理。
 4. **语法错时 ruff 只报第一处**（第 4 版的 `instance(` 就是修掉语法错才露出来的）
 5. **拼 shell 命令，核对的是渲染后的字符串，不是 Python 源码**（第 21、22 条）。源码里引号开合分在两行就看不出配对；
    对策：一段 shell 程序（awk 脚本）写在同一行 f-string 里，冒烟时把真正发出的 `cmd` 打印出来看一眼
+6. **循环要测「转 0 次 / 1 次 / 2 次以上 / 转到下限还不满足」四种**（list_files bug 6–9）。只测「转 1 次就满足」，
+   死循环和降到 0 都藏得住；循环变量要同时出现在条件、递减、调用三处 —— 三处名字不一致就是信号
 
 ## 六、实测数据（2026-09-14/15，WSL `.venv` Python 3.12.3；上半 shell 在 WSL 宿主机，下半进 astropy-12907 容器）
 
@@ -286,6 +304,8 @@ next_actions 引它重新 list。危害低，不处理。
 | 解析 stderr 的 NR | `int('68\n')` = 68（容忍首尾空白）；`int('')`、`int('awk: warn\n68\n')` → `ValueError` | 第 5 步：stderr 不是纯数字时不能让异常冲出工具 |
 | **list_files：仓库规模**（09-15，三个镜像 `/testbed`） | django-15863 / astropy-12907 / sympy-22714：跟踪文件 **6649** / 1876 / 1960；被 ignore 12 / **64** / 7；根目录条数·字符 depth=1 30·345 / 31·392 / 33·396，**depth=2 300·5763** / 134·2299 / 152·2609，**depth=3 2136·61704** / 691·17818 / 763·19280；单目录直接子项最多 281（django `docs/releases/`）/ 71 / 47；`git ls-files` 0.020s / 0.003s / 0.003s；三者都没有 `tree`，有 git 2.34.1、GNU find 4.8.0 | L1、L2、L4 |
 | **list_files：命令层**（09-15，astropy-12907 容器） | 绝对路径 pathspec `-- /testbed/astropy/io/fits` 输出**相对仓库根**（`astropy/io/fits/card.py`）；`é.py` 默认输出 `"astropy/\303\251.py"`，`-z` 原样；`-z` 输出以 `\0` 结尾（`setup.py\0`）→ `split("\0")[:-1]`；pathspec `[x]` 默认匹配到同级文件 `x`，加 `--literal-pathspecs` 后只剩 `[x]/a.py`；被 ignore 的 `astropy.egg-info` → 空输出 exit 0；新建未跟踪文件可见、`rm` 掉的已跟踪文件仍列出；守卫：文件 → 92、不存在 → 90、目录 → 0 | L4、L5、L9，已知边界 |
+| 降深度轨迹（`_aggregate` 包一层记录每次调用） | django 根目录渲染字符数：depth 4 → 132151、3 → 66922、2 → **8303**、1 → 426；astropy 4 → 48320、3 → 19472、2 → 2965、1 → 481。请求 4 走 4→3→2 停；平铺 1500 个文件请求 2 走 2→1 后截条目 | L2 |
+| **`list_files` 最终验收**（09-15，21 项全过；astropy-12907 + django-15863 + 假 exec） | `_aggregate` 纯函数 2 项；平铺 1500 文件 → 保留 588 条、content 9995 ≤ 10000、summary 写明降深度与省略 912 条；astropy 根目录默认 134 条、depth=3 降为 2；`astropy/io` 81 条全带前缀，尾斜杠结果相同；**输出的文件行原样传给 `read_file`、目录行去掉计数后传给 `list_files` 都成功**；只有文件的目录 next_actions 为空；新建未跟踪文件、`é.py` 原样、`[x]` 只匹配字面；`setup.py` / `nope` / `../etc` 三种错归类正确；被 ignore 的目录 ok 空；django 请求 4/3/2/1 → 2/2/2/1，content 均 ≤ 10000；`ruff check agent/` 全过 | 本模块验收 |
 | **以下进容器实测**（09-15，astropy-12907 镜像） | | |
 | `test` 守卫 | 不存在 → exit **90**、目录 → exit **91**，stdout 均为空 | 决定 14 |
 | awk `NR`（s=2, e=3） | `'a\nb\nc'` → stdout `'b\nc\n'`、NR=3；`'a\nb\n'` → NR=2；空文件 → stdout `''`、NR=0；`setup.py` NR=68 | 决定 13、15 |
@@ -306,8 +326,12 @@ next_actions 引它重新 list。危害低，不处理。
 - **软链接逃逸**：不处理，见 `DESIGN-environment.md` §七
 - **`//testbed/x` 被误拒**：POSIX 保留开头恰好两个斜杠。只误拒不误放，且报错里有归一化后的路径，不处理
 - **`environment.py` 的 `-w` 改用 `REPO_ROOT`**：✅ 09-15 进 astropy-12907 容器冒烟，`pwd` → `'/testbed\n'`，exit 0
-- **验收脚本没进仓库**：16 项验收跑的是会话临时脚本，不可复现。`tests/test_tools.py` 只有规格，其「真容器 vs 假 exec」取舍待定；
-  本次「包一层 env、`execute` 直接返回伪造 `ExecResult`」测了超时与 exit 2，可作假 exec 的原型
+- **验收脚本没进仓库**：read_file 16 项、list_files 21 项都是会话临时脚本，不可复现。
+  **`tests/test_tools.py` 的取舍（09-15 定，随 list_files 方案一并认可）：三层都要，按能不能在真容器触发来分** ——
+  ① 纯函数（`_aggregate` 这类，L10）直接喂列表测，不起容器；② 超时、意外退出码、平铺上千文件等真容器造不出或造起来贵的，
+  用假 env（`execute` 返回伪造 `ExecResult`，list_files 验收里的 `FakeEnv` 即原型）；③ 其余走真容器（astropy-12907）。
+  否决：只用真容器（超时 / exit 128 触发不了）· 只用假 exec（`-z`、`--literal-pathspecs`、`test` 守卫这类命令层事实测不到）。
+  **待办**：把两份验收脚本整理进 `tests/test_tools.py`，真容器用例打 marker 以便跳过
 
 ### `DESIGN-environment.md` §七 压在本模块的四条义务 —— 进度
 

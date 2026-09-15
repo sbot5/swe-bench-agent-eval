@@ -19,7 +19,7 @@
 | S1-dev | gold patch 跑完整 dev 子集 25 条 | ✅ **25/25 resolved**，errors=0，1024s，$0 |
 | S1-holdout | gold patch 跑 holdout 50 条 | ✅ **50/50 resolved**（剔除 1 条判定不稳定的实例后），258s，$0 |
 | S2 | mini-SWE-agent 基线，1 easy + 1 hard | ✅ 2/2 resolved，**$0.06** |
-| S3 | **自建 scaffold** | 🟡 **进行中 2/4 + `tools.py` 1/6** —— `observation.py` 385 行（[设计档案](docs/DESIGN-observation.md)）· `environment.py` 445 行、行为验收 22/22（[设计档案](docs/DESIGN-environment.md)）· `tools.py` 的 `read_file`，astropy 容器验收 16/16（[设计档案](docs/DESIGN-tools.md)）。下一步 `list_files` |
+| S3 | **自建 scaffold** | 🟡 **进行中 2/4 + `tools.py` 2/6** —— `observation.py` 385 行（[设计档案](docs/DESIGN-observation.md)）· `environment.py` 445 行、行为验收 22/22（[设计档案](docs/DESIGN-environment.md)）· `tools.py` 的 `read_file`（astropy 容器验收 16/16）与 `list_files`（astropy + django 容器验收 21/21）（[设计档案](docs/DESIGN-tools.md)）。下一步 `search_code` |
 | S4 | 两边各跑 dev 25 条对照 | ⬜ |
 | S5 | 冻结后跑 holdout 50 条，出归因表 | ⬜ |
 

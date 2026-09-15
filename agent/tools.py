@@ -87,6 +87,39 @@ def _validate_legal_path(path: object, args_context: str) -> str | Observation:
     return full_path
 
 
+def _aggregate(files: list[str], base: str, depth: int) -> list[str]:
+    """把相对仓库根的文件列表按相对 base 的 depth 层聚合成排好序的输出行；目录行带其下文件总数（L3、L7、L10）"""
+    counts: dict[str, int] = {}
+
+    for file in files:
+        parts = posixpath.relpath(file, base).split("/")
+
+        max_depth = min(depth, len(parts))
+
+        for i in range(1, max_depth + 1):
+            segment = posixpath.join(*parts[:i])
+            full = posixpath.normpath(posixpath.join(base, segment))
+
+            is_dir = i < len(parts)
+
+            if is_dir:
+                full += "/"
+
+            counts[full] = counts.get(full, 0) + 1
+
+    result: list[str] = []
+
+    for path in sorted(counts):
+        count = counts[path]
+
+        if path.endswith("/"):
+            result.append(f"{path} ({count} files)")
+        else:
+            result.append(path)
+
+    return result
+
+
 def read_file(
     env: DockerEnvironment,
     path: str,
@@ -354,5 +387,59 @@ def list_files(env: DockerEnvironment, path: str = ".", depth: int = DEFAULT_DEP
             ]
         )
 
-    # 6. 按 depth 聚合，目录行带文件数；超预算降 depth（L2、L3）
-    # 7. 组装 Observation.ok（L7）
+    # 6. 按 depth 聚合，目录行带文件数；超预算降 depth，参数 depth 保留请求值（L2、L3、L10）
+    base = posixpath.relpath(path_validate_result, REPO_ROOT)
+    lines = _aggregate(files=files, base=base, depth=depth)
+    used_depth = depth
+
+    while len("\n".join(lines)) > MAX_CONTENT_CHARS and used_depth > 1:
+        used_depth -= 1
+        lines = _aggregate(files=files, base=base, depth=used_depth)
+
+    # 6'. depth=1 仍超预算：按预算截条目，至少留 1 条（同 read_file 决定 19；L2）
+    total_entries = len(lines)
+    if len("\n".join(lines)) > MAX_CONTENT_CHARS:
+        kept: list[str] = []
+        size = 0
+        for line in lines:
+            added = len(line) + (1 if kept else 0)  # 第 2 条起多一个换行
+            if kept and size + added > MAX_CONTENT_CHARS:
+                break
+            kept.append(line)
+            size += added
+        lines = kept
+    omitted = total_entries - len(lines)
+
+    # 7. 组装：降过深度、截过条目都写进 summary；有子目录才给「往里看」的 next_actions（L2、L7）
+    summary = f"{len(lines)} entries under {path!r} at depth {used_depth} ({len(files)} files in total)"
+    if used_depth < depth:
+        summary += f"; depth reduced from {depth} to {used_depth} to fit the output budget"
+    if omitted:
+        summary += f"; {omitted} of {total_entries} entries omitted"
+
+    has_subdirs = any("/" in posixpath.relpath(f, base) for f in files)
+
+    if omitted:
+        next_actions = [
+            (
+                "The listing is cut at the output budget. List one of the directories shown, "
+                "or use search_code if you know a name to look for."
+            ),
+        ]
+    elif used_depth < depth:
+        next_actions = [
+            (
+                f"To see deeper than depth {used_depth}, call list_files on one of the directories shown; "
+                f"asking for depth={depth} on {path!r} again will be reduced the same way."
+            ),
+        ]
+    elif has_subdirs:
+        next_actions = ["To see inside a directory, call list_files with its path as shown."]
+    else:
+        next_actions = []
+
+    return Observation.ok(
+        summary=summary,
+        content="\n".join(lines),
+        next_actions=next_actions,
+    )
