@@ -1,7 +1,10 @@
 # environment.py 设计档案
 
-> 441 行（代码 157 + docstring 285）。本人逐行手写，Claude 只给判据、跑实测、审代码、补 docstring。
-> 行为验收 22/22。写于 2026-09-08，`79ec241`。
+> 初版 441 行（代码 157 + docstring 285）。本人逐行手写，Claude 只给判据、跑实测、审代码、补 docstring。
+> 行为验收 22/22（§六末）。写于 2026-09-08，`79ec241`。
+>
+> **2026-09-15 起代码里的 docstring 只写契约**（同 `DESIGN-tools.md` 的约定）：原先内嵌的决定、实测、纠错全部外移到本文 ——
+> 表格装不下的展开写在 §四末「逐个对象的展开」。引用写函数名，不写行号。
 >
 > 配套：[`DESIGN-observation.md`](DESIGN-observation.md)（上一个模块）
 
@@ -25,6 +28,9 @@ Docker 容器       /testbed，仓库停在 base_commit
 `environment.py` 是**唯一碰真实世界的地方**（子进程、会超时的东西、文件系统）。
 把不确定性关进一个盒子，盒子外面才测得动。
 
+**为什么 Agent 代码不跑在容器里**：容器里的 Python 是 3.6.13（配合被测仓库的年代），宿主机 venv 是 3.12。
+所以每条实例一个容器，工具通过 `docker exec` 在里面执行。mini-SWE-agent 也是这么做的。
+
 ## 二、为什么第二个写它
 
 `observation.py` 定了「工具怎么说话」，这一层定「工具怎么做事」。
@@ -43,7 +49,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 - `execute()` —— 跑一条命令，返回 `ExecResult`
 - `cleanup()` —— 销毁容器（`__exit__` 调）
 
-## 四、决策清单（28 条）
+## 四、决策清单（31 条；29–31 是 09-15 外移 docstring 时补录的，原先只写在代码里）
 
 ### ExecResult（7 条）
 
@@ -67,6 +73,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 11 | 名字里**不带**实例 id | 四步判据第 4 条：`docker ps` 的 `{{.Image}}` 已经带着实例身份，同一事实两个来源删掉一个 |
 | 12 | uuid 而非固定名 | 实测重名直接 `Conflict` 失败 → 一次泄漏会让后续全部起不来 |
 | 13 | `docker run` 加 `timeout=120` | 镜像不在本地时 docker 会自动 pull，能拉几分钟 |
+| 30 | `2h` 写死在 `_start_container`，不做成构造参数 | 只有 `run.py` 一个调用点，没有第二个取值的需求；真出现了再提参数 |
 
 ### 错误处理（8 条）
 
@@ -80,6 +87,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 19 | 警告里带 `container_id` + `Action required: docker rm -f <id>` | 和给模型写 `next_actions` 同构：根因 + 恢复指令 |
 | 20 | cleanup `timeout=30` 阻塞等待 | 否决 mini 的后台化（`docker.py:156` 的 `timeout 60 … &` + `Popen`）——它永不阻塞但**永远不知道清理有没有成功**。25 条 × 最坏 30 秒 = 12.5 分钟，换「知道有没有泄漏」 |
 | 21 | 捕获收窄到 `SubprocessError` | `TimeoutExpired` 和 `CalledProcessError` 的共同父类。顺带保证 `KeyboardInterrupt` / `SystemExit` 能穿过去（实测：它们不是 `Exception` 的子类） |
+| 31 | `docker run` 退出码 0 但 stdout 为空 → `RuntimeError` | 防「成功了却没拿到 id」的静默失败；否则 `container_id` 是 `""`，后面 `execute()` 的 `if not self.container_id` 会把它当成「忘了用 with」，根因指错 |
 
 ### execute（7 条）
 
@@ -88,10 +96,51 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 22 | 命令交给 `bash -c`，整条作为一个参数 | 六个工具需要 shell：`run_tests` 要 `cd && pytest`，`list_files` 要 `find \| head` |
 | 23 | **这一层不做命令 allowlist / 路径白名单** | ① 容器即沙箱 ② allowlist 会制造「被自己工具挡住」的假失败，污染实验结论 ③ 模型给的是**参数**不是整条命令 → 引用参数的义务归工具层 |
 | 24 | 显式 `-w /testbed` | 镜像自带 WORKDIR 但只在 2 个镜像上验过（共 500 个），依赖它是隐式契约。且实测 **`cd` 不跨 exec 持久** |
-| 25 | `encoding="utf-8"` + `errors="replace"` | 实测不加 `errors` 碰到二进制输出直接 `UnicodeDecodeError`，一次解码失败炸掉整条实例 |
+| 25 | `encoding="utf-8"` + `errors="replace"` | 容器输出不保证是合法 UTF-8（grep 命中二进制文件、`.pyc`、latin-1 测试固件）。实测不加 `errors` 直接 `UnicodeDecodeError`，一次解码失败炸掉整条实例，而它和要研究的东西毫无关系。同 mini `docker.py:120-121` |
 | 26 | `_safe_decode` 做成模块级独立函数 | 可单独测；execute 保持一个职责。同 `observation.py` 的 `_truncate` |
 | 27 | `time.monotonic()` 不用 `time.time()` | 墙上时钟会被 NTP 校时调整，极端情况下 duration 算出负数 |
-| 28 | 容器没起来抛 `RuntimeError`，**不用 `assert`** | 否决 mini 的 `assert self.container_id`（`docker.py:105`）—— `python -O` 会把 assert 整个编译掉。assert 是给内部不变量的，「忘了用 with」是调用方会犯的错 |
+| 28 | 容器没起来抛 `RuntimeError`，**不用 `assert`** | 否决 mini 的 `assert self.container_id`（`docker.py:105`）—— `python -O` 会把 assert 整个编译掉。assert 是给内部不变量的，「忘了用 with」是调用方会犯的错。和 `ExecResult.__post_init__` 用 `ValueError` 是同一个判断 |
+| 29 | `execute(timeout=60)` | 与 mini 的 `swebench.yaml` 一致 —— **控制变量**：这不是本项目的实验变量，不要动（同 `DESIGN-observation.md` 决定 22） |
+
+### 逐个对象的展开（2026-09-15 从 docstring 外移）
+
+**`DockerEnvironment`**
+
+- 决定 8 的代价：多一层 `with`，调用方不能拿一个「已经可用」的对象到处传。对本项目无所谓 —— 只有 `run.py` 一个调用点，
+  且它本来就是一条实例一个作用域
+- `container_id` 的生命周期：`__init__` → `None`；`__enter__` → 64 位十六进制 id；`cleanup` 删完后在 `finally` 里**无条件复位回 `None`**。
+  复位是为了让 cleanup 幂等 —— `__exit__` 调一次，将来若加 `__del__` 再调一次，第二次直接从头部返回，不会去删一个已经不存在的 id
+
+**`_start_container()` 的失败路径**
+
+| 情况 | 结局 | 理由 |
+| --- | --- | --- |
+| 镜像不存在 / docker 拒绝 | `RuntimeError`，带镜像名、退出码、`e.stderr` | 决定 14、15 |
+| docker 没装 | `FileNotFoundError` 原样抛 | 决定 16 |
+| 拉镜像超过 120 秒 | `TimeoutExpired` 原样抛 | 决定 13、16 |
+| 退出码 0 但 id 为空 | `RuntimeError` | 决定 31 |
+
+**`cleanup()`** —— `check=False` 时命令失败**不抛异常**，只体现在 `returncode` 上（09-08 实测）。所以两条路都要走：
+查 `returncode`（命令失败）+ `except SubprocessError`（进程异常，如超时）。只做其中一条就是聋的。
+配合 §六「`docker rm -f` 幂等」：`returncode != 0` 是没有假警报的信号
+
+**`execute()`**
+
+- 本层只有两种结局：跑完了（`timed_out=False`）和被超时打断了（`timed_out=True`）。非 0 退出码是正常返回值（`check=False`）——
+  命令失败是模型要看的信息，不是本层要处理的错误
+- 它是六个工具的唯一出口，它错一点，六个一起错
+- 超时分支必须自己 decode：`TimeoutExpired` 上没有 `returncode`（§六），所以 `exit_code` 只能是 `None` —— 这就是 `ExecResult`
+  「超时则 `exit_code is None`」那条契约的由来
+
+**`_safe_decode()`** —— 把 `None` / `bytes` / `str` 统一成 str
+
+| 形态 | 处理 | 什么时候出现 |
+| --- | --- | --- |
+| `None` | `""` | 超时前命令一个字都没输出（不是 `b""`） |
+| `bytes` | UTF-8 decode，`errors="replace"`（理由同决定 25） | `TimeoutExpired` 的正常形态 |
+| `str` | 原样 | `CompletedProcess` 的正常形态 —— 目前不走这条，留着以后能直接复用 |
+
+不 decode 直接拼进 f-string，模型看到的是 `b'\xe5\x87...'` 这种十六进制 —— **一次超时的观察，正是模型最需要读懂的时候**。
 
 ## 五、已纠正的错误
 
@@ -102,7 +151,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 「`wc -l` 对末尾无换行的文件少算 1，写进已知边界」 | 文件 `'a\nb\nc'`：awk `NR` = **3**（对），`wc -l` = **2** | awk 版本没这个问题，**该边界作废** |
 | 「别解析 stderr 文本，用 `exit_code` 分类」 | 「文件不存在」和「路径是目录」**退出码都是 2** | `exit_code` 不够用。改为**前置 `test` 守卫 + 自定义退出码（90+）**，仍然不解析文本 |
 
-### 代码 bug，11 个
+### 代码 bug，12 个（09-15 更正：原标题写成 11 个，下面实际编号到 12）
 
 **语法错（3 次，全是同一个手势）**
 
@@ -151,10 +200,28 @@ ls /testbed | head  → FileNotFoundError
 3. **别 grep ruff 的输出。** 语法错打印成小写的 `invalid-syntax:`，`grep '^[A-Z]'` 会把它全滤掉，看起来像「干净」
 4. **命名太像会助推 bug。** 参数 `cmd: str` 和局部 `exec_cmd: list` 只差一个前缀，而同一文件里另外两个方法的 `cmd` 都是列表 —— 同名不同类型本身就是陷阱
 
-## 六、实测数据（全部 2026-09-08，astropy-12907 镜像）
+## 六、实测数据（除注明外全部 2026-09-08，astropy-12907 镜像）
+
+### 容器事实（2026-09-06 实测 `sweb.eval.x86_64.django_1776_django-11138`，09-08 于 astropy-12907 复核）
 
 | 事实 | 值 | 用在哪 |
 | --- | --- | --- |
+| 工作目录 | `/testbed`，仓库停在 `base_commit`，工作区干净；镜像自带 `WORKDIR /testbed` | 决定 24 仍显式传 `-w` |
+| 没有 `rg` | 用 `git grep`（只搜跟踪文件，自动跳过 `.git` 和构建产物） | `search_code` |
+| 有 | `grep` `find` `git` `sed` `awk` `patch` `python`（3.6.13） | 六个工具拼命令 |
+| 评分测试 | **不在容器里** —— `test_patch` 是评测时才应用的，Agent 看不到。已实测确认，评测没有被污染 | — |
+| 镜像名规律 | `swebench/sweb.eval.x86_64.<repo>_1776_<instance 后半段>`；实际的用 `docker images \| grep sweb` 看 | `run.py` |
+| 残留容器 | `docker rm -f $(docker ps -aq --filter name=swebench-agent-)` | 决定 10 |
+
+### 执行层
+
+| 事实 | 值 | 用在哪 |
+| --- | --- | --- |
+| `sleep 4` + `--rm` | 到期后容器自动消失；同镜像 `tail -f /dev/null` 起的容器 3 秒后仍是 Up | 决定 9 |
+| `bash -c` | `ls /testbed \| head -3`、`echo A && echo B`、`cd /testbed && git rev-parse --short HEAD` 三条都正常 | 决定 22 |
+| 非 UTF-8 输出 | `printf '\xff\xfe\x00hello'`：不加 `errors` → `UnicodeDecodeError`；加了 → `'��\x00hello'` | 决定 25 |
+| 超时时的部分输出 | 容器内 `echo 出来一半; sleep 30` 配 `timeout=2`：`type(e.output)` 是 bytes，值 `b'\xe5\x87\xba\xe6\x9d\xa5\xe4\xb8\x80\xe5\x8d\x8a\n'` | `_safe_decode` |
+| `check=False` 的失败 | 不抛异常，只体现在 `returncode` | `cleanup` 两条路都查 |
 | `docker exec` 固定开销 | **≈ 32ms** | 1000 次调用 = 32 秒，可忽略 → 「要不要合并命令省调用」这问题不用再想 |
 | `TimeoutExpired` 的 output/stdout/stderr | **全是 bytes**（即使传了 encoding）；零输出时是 `None` | `_safe_decode` 的三个分支 |
 | 超时后容器内进程 | **还活着**（`sleep 987654` 仍在跑） | 已知边界 |
@@ -164,6 +231,10 @@ ls /testbed | head  → FileNotFoundError
 | 管道退出码 | `cat -n 不存在 \| sed` → **exit 0** | 工具层不用管道，或加 `set -o pipefail` |
 | 不 `shlex.quote` 路径 | `a b;whoami.py` 中 `;` 后被当第二条命令执行 | 命令注入的活样本 |
 | astropy 911 个 `.py` 行数 | p50=154 p75=425 p90=1003 p99=3019 max=4473 | `read_file` 默认 limit ≈ 200（与 `MAX_CONTENT_CHARS=10000` 自洽） |
+| **行为验收**（22/22） | 起容器 → exec → 销毁；with 内抛异常时容器仍被清掉；`execute("pwd")` 返回 `/testbed` 而不是宿主机路径；管道 / `&&` 可用；非 0 退出码原样返回；超时返回可读文本且 `exit_code=None` | 本模块验收 |
+
+⚠️ 验收脚本当时写在 `scratchpad/test_execute.py`，**没进仓库，现已不存在**（09-15 查：`git ls-files` 无、目录不在）——
+与 `DESIGN-tools.md` §七「验收脚本没进仓库」是同一个问题，定 `tests/` 取舍时一起处理。
 
 ## 七、已知边界与待办
 
