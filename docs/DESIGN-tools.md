@@ -93,11 +93,39 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 
 ## 四、待写工具的规格（尚未实现）
 
-### list_files(path, depth)
+### list_files(path=".", depth=2) —— 决定已定（09-15），实现中
 
-要定：递归深度上限。django 递归到底是几万个文件，一次就能打满上下文。
-建议：条数超上限时按目录聚合，不要截断 —— `tests/  (487 个文件)` 保留了「这里很多」这个信息，截断会丢掉。
-它和 search_code 语义重叠，要能说出它存在的理由（用在「还不知道该搜什么关键词」的阶段）。
+规格：列出 `path` 下 `depth` 层以内的文件和目录，每行一个相对 `/testbed` 的完整路径，目录带 `/` 和其下文件数。
+只按路径看结构，不看内容。实测依据见 §六「list_files」段。
+
+#### 执行步骤
+
+| 步 | 做什么 | 失败时 | 状态 |
+| --- | --- | --- | --- |
+| 1 | 校验 `depth`（`_validate_positive_int`） | `INVALID_ARGUMENT` | ⬜ |
+| 2 | 路径（`_validate_legal_path`，默认 `"."` → `/testbed`） | `INVALID_ARGUMENT` / `PATH_OUTSIDE_ROOT` | ⬜ |
+| 3 | `test -e … \|\| exit 90; test -d … \|\| exit 92; git --literal-pathspecs ls-files -z --cached --others --exclude-standard -- <quoted>` | — | ⬜ |
+| 4 | 分派：超时 / 90 不存在 / 92 不是目录 / 其余非 0 | `TIMEOUT` / `PATH_NOT_FOUND` / `INVALID_ARGUMENT` / `UNCLASSIFIED` | ⬜ |
+| 5 | `stdout.split("\0")[:-1]` 得到相对仓库根的文件列表；为空 → ok 并说明（L9） | — | ⬜ |
+| 6 | 按 depth 聚合：深度相对 `path` 计；目录行带其下文件总数；超预算则 depth − 1 重算，到 1 仍超则按预算截条目（L2） | — | ⬜ |
+| 7 | 组装 `Observation.ok`：降过深度或截过条目，summary 写明，next_actions 指向对子目录再调 | — | ⬜ |
+
+#### 决策清单
+
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| L1 | `depth` 默认 **2**，**不设硬上限**，复用 `_validate_positive_int` | 根目录 depth=2 三个仓库都装得下（django 5763 字符），depth=3 三个全爆（17818–61704）；固定上限两头不讨好：2 在子目录不够（`astropy/io` 合理用 3），3 在根目录必爆 —— 超预算交给 L2 | 硬上限 3 · 默认 1（根目录第一次调用必然还要再调） |
+| L2 | 超 `MAX_CONTENT_CHARS` → **自动降 depth** 直到装下，summary 写明「请求 N，实际 M」；depth=1 仍超才按预算截条目并写明省略数 | 降深度保住全局形状，截条目会让排在后面的目录整个消失；最大单目录直接子项 281（django `docs/releases/`），depth=1 截条目的分支实际很难触发 | 截条目 · 报 error（模型没做错事） |
+| L3 | **每个目录行带其下文件总数**：`astropy/io/  (364 files)` | 「这里很多」是决定下一步钻哪里的信息；一条规则覆盖所有目录，不区分是否在深度边界（比只给边界目录少一个分支） | 只列名字 · 只给边界目录计数 |
+| L4 | 数据源 `git ls-files --cached --others --exclude-standard`，加 **`-z`** 和 **`--literal-pathspecs`** | `find` 会列出 astropy 64 个构建产物（`.so`、生成的 `.c`、egg-info）；`--others` 让 agent 新建的文件可见；默认输出把 `é.py` 转义成 `"astropy/\303\251.py"`、含换行的文件名也会被转义，`-z` 才是原文；pathspec 默认按通配解释，列 `[x]` 会把同级文件 `x` 一起带出来 | `find` + 手写排除（排除规则补不全） · 不加 `-z` · 不加 `--literal-pathspecs` |
+| L5 | shell 只列，**聚合在 Python**；命令不用管道；守卫 `test -e \|\| exit 90`（复用 `_EXIT_NOT_FOUND`）、`test -d \|\| exit 92` | 满足 §七 义务「不用管道」；聚合逻辑能单测；django 6649 行 stdout 对 subprocess 不是负担（`environment.py` 不截 stdout） | `git … \| awk` 聚合 |
+| L6 | **不接收 pattern / glob 参数**；与 `search_code` 分工 = 按路径看结构 vs 按内容找 | 存在理由：还不知道搜什么关键词时认识仓库；`read_file` 的 `PATH_NOT_FOUND` / 是目录两条 next_actions 已指向它。加 glob 就和搜索重叠 | 加 glob 参数 |
+| L7 | 每行一个**相对 `/testbed` 的完整路径**，目录带 `/`，按路径排序 | 模型可直接复制进 `read_file`，不必从缩进拼路径 | tree 式缩进 |
+| L8 | `path` 默认 `"."` | 与 read_file 决定 3 同理：最常见的调用是「先看看仓库长什么样」；`_validate_legal_path(".")` 归一化为 `/testbed`，无需特判 | 不给默认值 |
+| L9 | 路径是文件（exit 92）→ `INVALID_ARGUMENT`，next_actions 指向 `read_file`；目录下无可列文件（全被 ignore，如 `astropy.egg-info`，exit 0 空输出）→ **ok** 并说明 gitignore 的内容不显示 | 与 read_file 决定 16 对称；空结果模型没做错事，但要告诉它「空」的原因，否则会以为目录真的空 | `IS_A_FILE` 新枚举 · 空结果报 error |
+
+已知边界：工作区里删掉但未提交的已跟踪文件，`--cached` 仍会列出（§六实测）；模型随后 `read_file` 得到 `PATH_NOT_FOUND`，
+next_actions 引它重新 list。危害低，不处理。
 
 ### search_code(pattern, path, context, max_results)
 
@@ -146,10 +174,11 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 
 ## 五、已纠正的错误
 
-### 设计判断（Claude 的，2 条）
+### 设计判断（Claude 的，3 条）
 
 | 原判断 | 实际 | 结论 |
 | --- | --- | --- |
+| 09-14 规格写「django 递归到底是几万个文件，一次就能打满上下文」 | 09-15 进 django-15863 容器实测：`git ls-files` **6649** 个，含忽略文件 6657 个 | 「打满上下文」的结论不变（depth=3 就 61704 字符），但依据改用实测数（§六），决定见 L1–L2 |
 | 09-14 把 D3（读法）、D4（不存在 vs 是目录）当作悬置，推荐「`cat` 全文 + Python 切片」、区分失败「只能看 stderr 或先 `test -f`」 | `DESIGN-environment.md` §五 09-08 已有结论：awk `NR` 数行正确；前置 `test` 守卫 + 自定义退出码（90+），不解析文本。Claude 没回查设计档案就出题 | 以 09-08 结论为准。补充：WSL 宿主机上 `cat` 对不存在和是目录**都是 exit 1**（09-08 记录的是 2，命令不同），同样说明退出码分不开 |
 | 决定 4 起初表述成「limit 要不要设上限」 | 读了 `_truncate` 决定三才发现真正的问题是「超长内容由谁截」：render 丢中段，工具给的续读行号失效 | 改问法后选 (b) 按字符预算截停 |
 
@@ -247,6 +276,8 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 | `match` 里的裸名字 | `case _EXIT_NOT_FOUND:` 是**捕获**：传 91 也命中，且把常量名重新绑定成 91；后面还有 case 时 → `SyntaxError: name capture ... makes remaining patterns unreachable`；带点的名字（`ns.NOT_FOUND`）才是值比较 | 第 4 步用 `if/elif` 比较模块常量 |
 | 切 awk 的 stdout | `s.split("\n")[:-1]`：`'b\nc\n'` → `['b','c']`、`''` → `[]`、`'x\r\n'` → `['x\r']`；`removesuffix("\n").split("\n")` 对 `''` 给 `['']`（空当成 1 行） | 第 5 步切行用 `[:-1]`，依据是 awk 每行都补 `\n` |
 | 解析 stderr 的 NR | `int('68\n')` = 68（容忍首尾空白）；`int('')`、`int('awk: warn\n68\n')` → `ValueError` | 第 5 步：stderr 不是纯数字时不能让异常冲出工具 |
+| **list_files：仓库规模**（09-15，三个镜像 `/testbed`） | django-15863 / astropy-12907 / sympy-22714：跟踪文件 **6649** / 1876 / 1960；被 ignore 12 / **64** / 7；根目录条数·字符 depth=1 30·345 / 31·392 / 33·396，**depth=2 300·5763** / 134·2299 / 152·2609，**depth=3 2136·61704** / 691·17818 / 763·19280；单目录直接子项最多 281（django `docs/releases/`）/ 71 / 47；`git ls-files` 0.020s / 0.003s / 0.003s；三者都没有 `tree`，有 git 2.34.1、GNU find 4.8.0 | L1、L2、L4 |
+| **list_files：命令层**（09-15，astropy-12907 容器） | 绝对路径 pathspec `-- /testbed/astropy/io/fits` 输出**相对仓库根**（`astropy/io/fits/card.py`）；`é.py` 默认输出 `"astropy/\303\251.py"`，`-z` 原样；`-z` 输出以 `\0` 结尾（`setup.py\0`）→ `split("\0")[:-1]`；pathspec `[x]` 默认匹配到同级文件 `x`，加 `--literal-pathspecs` 后只剩 `[x]/a.py`；被 ignore 的 `astropy.egg-info` → 空输出 exit 0；新建未跟踪文件可见、`rm` 掉的已跟踪文件仍列出；守卫：文件 → 92、不存在 → 90、目录 → 0 | L4、L5、L9，已知边界 |
 | **以下进容器实测**（09-15，astropy-12907 镜像） | | |
 | `test` 守卫 | 不存在 → exit **90**、目录 → exit **91**，stdout 均为空 | 决定 14 |
 | awk `NR`（s=2, e=3） | `'a\nb\nc'` → stdout `'b\nc\n'`、NR=3；`'a\nb\n'` → NR=2；空文件 → stdout `''`、NR=0；`setup.py` NR=68 | 决定 13、15 |
