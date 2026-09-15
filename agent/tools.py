@@ -1,74 +1,243 @@
 """六个工具。全部通过 environment 执行，全部返回统一的 Observation。
 
-写的顺序：read_file -> list_files -> search_code -> apply_patch
-          -> run_tests -> git_diff
-先用 read_file 把「宿主机 -> docker exec -> 观察」这条链走通。
-
-====================================================================
-list_files(path, depth)
-    要定：递归深度上限。django 递归到底是几万个文件，一次就能打满上下文。
-    建议：条数超上限时按目录聚合，不要截断 ——
-          tests/  (487 个文件)  保留了「这里很多」这个信息，截断会丢掉。
-    它和 search_code 语义重叠，你要能说出它存在的理由
-    （用在「还不知道该搜什么关键词」的阶段）。
-
-====================================================================
-search_code(pattern, path, context, max_results)
-    用 git grep -n -C <context>，不是 ripgrep（容器里没有）。
-    要定三件事：
-      正则还是字面量   模型写的正则经常错且难自查，考虑给个 literal 开关
-      上下文行数       0 行会逼模型必然再跟一次 read_file。
-                       多一步 = 多一次 LLM 调用 = 多花钱 + 多一次出错机会
-      结果条数上限     超了要告诉模型总共命中多少条，让它自己收窄查询
-
-====================================================================
-read_file(path, offset, limit)
-    必须支持行范围，否则大文件读不了。默认读多少行？
-    要不要带行号？带 —— 即使 apply_patch 不需要行号，
-    行号也让模型能说「我要看 200-300 行」，且你读 trajectory 时对得上位置。
-
-====================================================================
-apply_patch(...)     <-- 这一个决定影响 resolved 率超过其他五个加起来
-    三选一：
-      (a) unified diff      token 最省，但模型极易算错行号 -> git apply 失败。
-                            这是失败模式 1 的主要来源
-      (b) search / replace  不依赖行号，鲁棒；要求 old_string 唯一，token 更贵
-      (c) 全文件重写        最鲁棒，但大文件 token 爆炸，
-                            且容易顺手改坏别处 -> 失败模式 3
-
-    建议 (b)。理由三条：
-      1. 它把「行号算错」这一整类失败消灭，而不是缓解
-      2. Aider 用的就是它，有公开工程实证可引用
-      3. 它的失败可精确分类（找不到 / 不唯一），两种都能给明确恢复指令,
-         那正是归因表要的数据
-
-    错误契约（三条都要写）：
-      找不到     给出最接近的三处（行号 + 内容），要求先 read_file 确认再重试
-      不唯一     给出全部出现位置，要求扩大 old_string 使其唯一
-      连续失败   同一文件失败 3 次 -> 停，别再改这个文件      <-- 停止条件
-
-====================================================================
-run_tests(target, timeout)
-    要定：
-      粒度   支持指定测试文件/模块，不要只有「全跑」。
-             django 全套一次几十秒，全跑会把时间和 token 都吃掉
-      截断   只保留失败部分 + 统计行，通过的全丢。
-             通过的测试对模型零信息量
-      超时   必须有，死循环的测试会挂死整个 loop
-
-====================================================================
-git_diff()
-    两个角色别混：
-      harness 提取答案   在 loop 外面做，不占 Agent 步数
-      Agent 自查         提交前看一眼自己改了什么
-
-    保留为 Agent 工具的理由是第二个角色有明确因果：
-    它让模型发现「我改了不该改的文件」，直接减少失败模式 3（PASS_TO_PASS 挂）。
-
-====================================================================
-每个工具的验收（不用等 Agent 写完，单独测）
-  1. 正常路径的返回，你自己读一遍能看懂在说什么
-  2. 每条错误路径都有 根因 + 重试指令 + 停止条件（三种错手工各触发一次）
-  3. 超大输入不炸：读万行文件、搜命中几千次的词，且截断被明确告知
-  4. 安全边界生效：路径白名单挡住 /etc/passwd，命令 allowlist 挡住 rm -rf
+写的顺序：read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
+规格、验收、决定、实测：docs/DESIGN-tools.md
 """
+import posixpath
+import shlex
+from typing import Final
+
+from agent.environment import REPO_ROOT, DockerEnvironment
+from agent.observation import MAX_CONTENT_CHARS, FailureCategory, Observation
+
+DEFAULT_OFFSET: Final[int] = 1
+DEFAULT_LIMIT: Final[int] = 200
+_EXIT_NOT_FOUND: Final[int] = 90
+_EXIT_IS_DIR: Final[int] = 91
+
+
+def _validate_positive_int(name: str, val: object, default_val: int, args_context: str) -> Observation | None:
+    """统一校验参数必须为大于等于 1 的整数"""
+    summary = None
+    if type(val) is not int:  # 不用 isinstance：bool 是 int 的子类
+        summary = f"{name} should be int, received: {val!r}"
+    elif val < 1:
+        summary = f"{name} should be at least 1, received: {val!r}"
+
+    if summary:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary=summary,
+            content=f"Current args: {args_context}",
+            next_actions=[
+                f"Pass an integer >= 1 as {name}, or omit {name} to use the default ({default_val}).",
+                f"This error is about the {name} argument, not the file; switching to another file will not help.",
+            ],
+        )
+    return None
+
+
+def _validate_legal_path(path: object, args_context: str) -> str | Observation:
+    """校验路径是否合法"""
+    if type(path) is not str:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary=f"Path should be str, received: {path!r}",
+            content=f"Current args: {args_context}",
+            next_actions=[
+                "Pass path as a string relative to the repo root, e.g. 'astropy/io/fits.py'."
+            ]
+        )
+    if not path:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary="Path should not be ''",
+            content=f"Current args: {args_context}",
+            next_actions=[
+                "Pass a non-empty path relative to the repo root, e.g. 'astropy/io/fits.py'."
+            ]
+        )
+    if '\x00' in path:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary=f"Path: {path!r} includes '\\x00'",
+            content=f"Current args: {args_context}",
+            next_actions=[
+                "Remove the '\\x00' from path and retry."
+            ]
+        )
+
+    full_path = posixpath.normpath(
+        posixpath.join(REPO_ROOT, path)
+    )
+
+    if full_path != REPO_ROOT and not full_path.startswith(REPO_ROOT + "/"):
+        return Observation.error(
+            failure_category=FailureCategory.PATH_OUTSIDE_ROOT,
+            summary=f"Path: {path!r} is outside of the root: {REPO_ROOT}",
+            content=f"Current args: {args_context}, normalised path: {full_path!r}",
+            next_actions=[
+                f"Use a path inside {REPO_ROOT}, relative to it, e.g. 'astropy/io/fits.py'.",
+                f"Files outside {REPO_ROOT} cannot be read; do not retry with another absolute path outside it.",
+            ]
+        )
+
+    return full_path
+
+
+def read_file(
+    env: DockerEnvironment,
+    path: str,
+    offset: int = DEFAULT_OFFSET,
+    limit: int = DEFAULT_LIMIT,
+) -> Observation:
+    """读容器里的一个文件，按行范围返回，带行号。
+
+    参数错 -> INVALID_ARGUMENT；路径越出 REPO_ROOT -> PATH_OUTSIDE_ROOT。
+    决定、错误契约、实测：docs/DESIGN-tools.md §三。
+    """
+    args_ctx = f"path:{path!r}, offset: {offset!r}, limit: {limit!r}"
+
+    # 集中校验各参数
+    for name, val, default_val in [
+        ("offset", offset, DEFAULT_OFFSET),
+        ("limit", limit, DEFAULT_LIMIT),
+    ]:
+        if (err := _validate_positive_int(name, val, default_val, args_ctx)) is not None:
+            return err
+
+    path_validate_result = _validate_legal_path(path, args_ctx)
+    if isinstance(path_validate_result, Observation):
+        return path_validate_result
+
+    quoted_path = shlex.quote(path_validate_result)
+    end = offset + limit - 1
+
+    cmd = (
+        f"test -e {quoted_path} || exit {_EXIT_NOT_FOUND}; "
+        f"test -d {quoted_path} && exit {_EXIT_IS_DIR}; "
+        f"awk -v s={offset} -v e={end} "
+        f"'NR >= s && NR <= e {{print}} END {{print NR > \"/dev/stderr\"}}' "
+        f"{quoted_path}"
+    )
+
+    exec_result = env.execute(cmd)
+
+    path_ctx = f"Current args: {args_ctx}, normalised path: {path_validate_result!r}"
+
+    if exec_result.timed_out:
+        return Observation.error(
+            failure_category=FailureCategory.TIMEOUT,
+            summary=f"Reading {path!r} timed out after {exec_result.duration:.1f}s",
+            content=path_ctx,
+            next_actions=[
+                "Retry once with the same arguments.",
+                (
+                    f"If it times out again, stop reading {path!r}; this is an environment problem, "
+                    "and a smaller limit will not help because the whole file is still scanned."
+                ),
+            ]
+        )
+
+    if exec_result.exit_code == _EXIT_NOT_FOUND:
+        return Observation.error(
+            failure_category=FailureCategory.PATH_NOT_FOUND,
+            summary=f"Path: {path!r} does not exist",
+            content=path_ctx,
+            next_actions=[
+                "Call list_files on the parent directory to see which files actually exist, then read one of them.",
+                "Do not guess other paths one by one; if you do not know where the code lives, use search_code.",
+            ]
+        )
+
+    if exec_result.exit_code == _EXIT_IS_DIR:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary=f"Path: {path!r} is a directory, not a file",
+            content=path_ctx,
+            next_actions=[
+                f"Call list_files on {path!r} to see its contents, then read_file one of the files inside it.",
+                "This error is about the path argument; retrying read_file on the same directory will not help.",
+            ]
+        )
+
+    if exec_result.exit_code != 0:
+        return Observation.error(
+            failure_category=FailureCategory.UNCLASSIFIED,
+            summary=f"Reading {path!r} failed with unexpected exit code {exec_result.exit_code}",
+            content=f"{path_ctx}, exit code: {exec_result.exit_code}, stderr: {exec_result.stderr!r}",
+            next_actions=[
+                "Retry once with the same arguments.",
+                (
+                    f"If it fails again with the same stderr, stop reading {path!r} and continue with other files; "
+                    "changing the arguments will not fix this."
+                ),
+            ]
+        )
+
+    # 此时exit_code恒为0
+    lines = exec_result.stdout.split("\n")[:-1]
+
+    try:
+        total_lines = int(exec_result.stderr)
+    except ValueError:
+        return Observation.error(
+            failure_category=FailureCategory.UNCLASSIFIED,
+            summary=f"Reading {path!r} returned an unreadable line count",
+            content=f"{path_ctx}, stderr: {exec_result.stderr!r}",
+            next_actions=[
+                "Retry once with the same arguments.",
+                (
+                    f"If it fails again with the same stderr, stop reading {path!r} and continue with other files; "
+                    "changing the arguments will not fix this."
+                ),
+            ]
+        )
+
+    if total_lines == 0:
+        return Observation.ok(
+            summary=f"Path: {path!r} is an empty file (0 lines)",
+            content="",
+            next_actions=[]
+        )
+
+    if total_lines < offset:
+        return Observation.error(
+            failure_category=FailureCategory.INVALID_ARGUMENT,
+            summary=f"offset {offset} is beyond the end of {path!r}, which has {total_lines} lines",
+            content=f"{path_ctx}, total lines: {total_lines}",
+            next_actions=[
+                f"Pass an offset between 1 and {total_lines}, e.g. offset=1 to read from the start.",
+                "This error is about the offset argument; the file exists, so switching to another file will not help.",
+            ]
+        )
+
+    content = ""
+    last_line_number: int | None = None
+
+    for idx, line in enumerate(lines, start=offset):
+        formatted_line = f"{idx:>6}\t{line}\n"
+
+        if content and len(content) + len(formatted_line) > MAX_CONTENT_CHARS:
+            break
+
+        content += formatted_line
+        last_line_number = idx
+
+    assert last_line_number is not None  # 第 5 步保证 lines 至少一行；这行只为类型收窄
+    content = content.removesuffix("\n")  # render() 自己在 </content> 前加换行
+
+    if last_line_number < total_lines:
+        return Observation.ok(
+            summary=f"Lines {offset}-{last_line_number} of {path!r} ({total_lines} lines in total)",
+            content=content,
+            next_actions=[
+                f"To continue, call read_file with path={path!r}, offset={last_line_number + 1}, limit={limit}.",
+            ]
+        )
+    else:
+        return Observation.ok(
+            summary=f"Lines {offset}-{last_line_number} of {path!r}, end of file reached ({total_lines} lines in total)",
+            content=content,
+            next_actions=[]
+        )

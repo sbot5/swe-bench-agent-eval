@@ -130,6 +130,7 @@ class FailureCategory(StrEnum):
     IO_ERROR = auto()
     TIMEOUT = auto()
     UNCLASSIFIED = auto()
+    INVALID_ARGUMENT = auto()
 
     def is_env_error(self) -> bool:
         return self in { FailureCategory.IO_ERROR, FailureCategory.TIMEOUT }

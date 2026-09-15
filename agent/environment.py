@@ -63,8 +63,12 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Self
+from typing import Final, Self
 
+# 容器内仓库根。两处消费者，必须同源：
+#   execute() 的 docker exec -w（工作目录）
+#   tools.py 的路径白名单（只放行 REPO_ROOT 及其子路径）
+REPO_ROOT: Final = "/testbed"
 
 @dataclass(frozen=True)
 class ExecResult:
@@ -373,7 +377,7 @@ class DockerEnvironment:
             "docker",
             "exec",
             "-w",
-            "/testbed",
+            REPO_ROOT,
             self.container_id,
             "bash",
             "-c",
