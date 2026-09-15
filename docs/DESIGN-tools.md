@@ -1,6 +1,7 @@
 # tools.py 设计档案
 
-> **进行中 1/6**。`read_file` ✅ 2026-09-15（7 步全部完成，astropy 容器验收 16/16，§六末行）；其余 5 个工具只有规格（§四）。
+> **进行中 3/6**。`read_file` ✅ 2026-09-15（7 步全部完成，astropy 容器验收 16/16，§六末行）；`list_files` ✅ 09-15（21/21）；
+> `search_code` ✅ 09-15（**Claude 写**，按 09-15 grilling 改定的分工；51/51，§六）；其余 3 个工具只有规格（§四）。
 > 判断逻辑本人手写；Claude 给思路、跑实测、审代码。**例外**：09-15 的报错文案、docstring、类型标注、格式由 Claude 改（本人要求）。
 >
 > 配套：[`DESIGN-observation.md`](DESIGN-observation.md)（工具怎么说话）· [`DESIGN-environment.md`](DESIGN-environment.md)（工具怎么做事；其 §七 的四条义务压在本模块）
@@ -136,13 +137,50 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 已知边界：工作区里删掉但未提交的已跟踪文件，`--cached` 仍会列出（§六实测）；模型随后 `read_file` 得到 `PATH_NOT_FOUND`，
 next_actions 引它重新 list。危害低，不处理。
 
-### search_code(pattern, path, context, max_results)
+### search_code(pattern, path=".", fixed_string=False, context=2, max_results=20) —— ✅ 09-15，Claude 写
 
-用 `git grep -n -C <context>`，不是 ripgrep（容器里没有）。要定三件事：
+规格：按内容搜 `path`（文件或目录）下的文本文件；pattern 默认按 PCRE 解释，`fixed_string=True` 按字面量。
+输出按文件分组：文件名单独一行（相对 `/testbed`，可直接喂 `read_file`），下面 `  行号: 命中行` / `  行号- 上下文行`，同文件内不相邻的段用 `--` 隔开。
+实测依据见 §六「search_code」段。**S1–S3 三件事本人 09-15 拍板**；S4 起是 Claude 按实测定的，本人审稿时可推翻。
 
-- **正则还是字面量**：模型写的正则经常错且难自查，考虑给个 literal 开关
-- **上下文行数**：0 行会逼模型必然再跟一次 read_file。多一步 = 多一次 LLM 调用 = 多花钱 + 多一次出错机会
-- **结果条数上限**：超了要告诉模型总共命中多少条，让它自己收窄查询
+#### 执行步骤（全部 Claude 写，待本人审）
+
+| 步 | 做什么 | 失败时 |
+| --- | --- | --- |
+| 1 | 校验 `pattern`（非空 str、无换行 / NUL）· `fixed_string`（bool）· `context`（int 0–10）· `max_results`（`_validate_positive_int`） | `INVALID_ARGUMENT`，不发命令 |
+| 2 | 路径（`_validate_legal_path`，默认 `"."`） | `INVALID_ARGUMENT` / `PATH_OUTSIDE_ROOT` |
+| 3 | 第一遍计数：`test -e … \|\| exit 90`；`git grep -c -z` 跑 tracked 模式和 `--untracked` 模式各一次，退出码在 shell 里合并 | — |
+| 4 | 分派：超时 / 90 / **1 → ok「没命中」** / **128 → pattern 被拒** / 其余非 0 | `TIMEOUT` / `PATH_NOT_FOUND` / — / `INVALID_ARGUMENT`（附 stderr）/ `UNCLASSIFIED` |
+| 5 | `_parse_counts` 去重排序；按路径顺序选文件，累计命中 ≥ `max_results` 或满 400 个文件停 | — |
+| 6 | 第二遍只搜选中文件：`git grep --no-index -n -z --column -C <context>` | 超时 → `TIMEOUT`；非 0 → `UNCLASSIFIED` |
+| 7 | `_parse_grep_lines` 解析；`_render_hits` 排版，`max_results` 和字符预算谁先到听谁的，至少 1 条 | — |
+| 8 | 组装：summary 写「显示 N / 共 M 条，K 个文件」；截断时 next_actions 列命中最多的 5 个文件，并按截断原因说明「调大 max_results 有没有用」 | — |
+
+#### 决策清单
+
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| S1 | **默认 PCRE（`-P`）+ `fixed_string` 开关（`-F`）**（本人定） | 模型写的是 Python `re` 语法。BRE：`def __init__\(` → exit 128，`foo\|bar` 当字面量；**ERE：`\d+` 静默匹配 astropy 275,601 行**（`\d` = 字母 d）；PCRE 六个样例全部与 Python 语义一致，速度 33ms vs BRE 35ms | 默认字面量 + 正则开关 · 只给 PCRE 不给开关（搜 `def f(` 必须先报错一次） |
+| S2 | **`context` 默认 2，允许 0–10**（本人定），超出 → `INVALID_ARGUMENT` 并指向 `read_file` | 0 行逼模型必然再调一次 `read_file`；更多上下文按行号 `read_file` 更省。不复用 `_validate_positive_int`（0 合法），就地校验 | 默认 3 · 固定 2 不给参数 |
+| S3 | **`max_results` 默认 20、不设硬上限 + 字符预算**；截断时列命中最多的 5 个文件（本人定） | 【推算】`-C2` 下每条命中 155–442 字符，10000 预算放 22–60 条，20 条基本装得下；文件分布告诉模型往哪收窄。因预算截断时明说「调大 max_results 没用」，防止模型空转 | 只给总数 · 超 200 条只给分布 |
+| S4 | **两遍**：第一遍 `-c -z` 只计数，第二遍只对选中文件取内容 | git 2.34 **没有 `--max-count`**（exit 129）；单遍 `-C2` 的 stdout django `self` 19MB、`e` 74MB。`-c -z` 在 django `e` 上 219KB / 224ms；两遍整体 django `e` 0.95s | 单遍取全量再在 Python 截 · shell 里 `head` 截（违反「不用管道」） |
+| S5 | 固定参数：`-I`（跳二进制）· `--literal-pathspecs` · `-e`（pattern 以 `-` 开头会被当选项：`unknown option 'version'`） | 不加 `-I` 输出 `Binary file … matches` 行；L4 同理 | — |
+| S6 | 第二遍用 **`-z --column`**：命中行 `path\0行号\0列号\0文本`，上下文行少一个字段 | 不加 `-z`：文件名 `a:1:b.py` 与 `-n` 分隔符混淆，`é.py` 被转义；只加 `-z`：命中行和上下文行分隔符都成 `\0`，**分不清**；`--column` 只给命中行加列号 | 不加 `-z` + `core.quotepath=false`（冒号歧义仍在） |
+| S7 | exit 1（没命中）→ **ok**，next_actions 提示转义 / `fixed_string`、说明 ignore 与二进制不搜，并给停止条件 | 与 L9 同理：模型没做错事，但要知道「空」的可能原因 | 报 error |
+| S8 | exit 128 → **`INVALID_ARGUMENT` 并附 stderr**（不解析 stderr，只转交） | 路径已在第 2 步校验、pathspec 是字面量，实测中 128 只由 pattern 语法错触发（【判断】其他 fatal 来源未见，不排除）；stderr 原文（`missing closing parenthesis`）就是修正指引；next_actions 另给停止条件以防不是 pattern 的问题 | 归 `UNCLASSIFIED`（模型不知道该改 pattern） |
+| S9 | 单行超过 **500 字符**截断并注明剩余字符数 | 命中行 > 2000 字符：astropy 6 行、django 3 行，最长 89,478（压缩 JS） | 不截，交给 render 的头尾截断（会把其他命中一起截掉） |
+| S10 | 输出按文件分组（`--heading` 式），行号右对齐 6 位 | 文件名不在每行重复，同预算多放命中；文件名行原样可喂 `read_file`（验收 R8b） | 每行 `path:行号:文本` |
+| S11 | `path` 可以是文件或目录，只守卫 `test -e`（exit 90） | `git grep` 两者都接受；与 `read_file` / `list_files` 不同，这里没有「类型不对」的错误 | 再加 `test -d` |
+| S12 | pattern 拒绝空串、换行、NUL | 空串匹配每一行；NUL 让 `subprocess` 启动前抛 `ValueError`（§六）；搜索按行进行，多行 pattern 没有意义 | — |
+| S13 | 计数解析、记录解析、排版抽成纯函数 `_parse_counts` / `_parse_grep_lines` / `_render_hits` | 沿用 L10；截断逻辑的边界（隔段前文、预算、context=0）不起容器就能测，验收 P1–P7 | 内联 |
+| S14 | **第一遍 tracked + `--untracked` 各跑一次取并集；第二遍 `--no-index`** | **`--untracked` 会跳过已跟踪但匹配 `.gitignore` 的文件**：astropy 有 7 个（`*.c` 规则命中 `tokenizer.c` `bls.c` 等真源码），`self` 总数 33,722 vs 33,895；不加 `--untracked` 又看不到 agent 新建的文件。并集 = `list_files` 的 `--cached --others --exclude-standard` 语义。`--no-index` 对点名文件不看 ignore 规则 | 只用 `--untracked`（漏源码）· `--no-exclude-standard`（带出 64 个构建产物）· 先 `ls-files` 再逐个 grep（django 6649 个路径拼进命令会超单参数上限：WSL 宿主机实测 131,071 字符可以、131,072 `Argument list too long`；`docker exec … bash -lc <cmd>` 的 cmd 是一个参数） |
+| S15 | 解析容忍二进制碎片：行文本里的 NUL 显示为 `\0`；对不上 `path\0行号\0` 结构的行跳过 | `-I` 只看文件开头（【判断】git 的二进制检测只看前 8000 字节）：`chandra_time.fits` 含 2,788 个 NUL 仍被当成文本，其 NUL 与碎片使第一版 `int('')` 崩溃（§五） | 按 `\0` 个数判断（遇 NUL 即错判） |
+
+已知边界：
+- 文件名含换行 → 按行切分会错位（只影响该文件的记录，被 S15 跳过）
+- 二进制数据里的上下文行若恰以 `数字\0` 开头会被误判为命中行（S15 的正则无法区分），只出现在 FITS 这类数据文件
+- 两遍之间文件被改 → 第二遍命中数与第一遍不同；单 agent 串行调用不会发生，不处理
+- 超过 400 个文件的选择上限由预算推出（每个文件至少「文件名 + 1 行」），django `e` + `max_results=100000` 实测 0.81s 正常（D2）
 
 ### apply_patch(...) —— 这一个决定影响 resolved 率超过其他五个加起来
 
@@ -274,6 +312,16 @@ next_actions 引它重新 list。危害低，不处理。
 | 8 | 循环 v2 | `used_depth = depth - 1` 每轮从请求值重算 + 条件仍判 `depth > 1` → **死循环**（django 请求 4：4→3→3→3…） | 请求 3 时降一次就装下，**没有「要降两次」的用例** |
 | 9 | 循环 v3 | 条件仍判 `depth > 1`（`used_depth` 已正确递减）→ depth=1 仍超预算时降到 **0**，`_aggregate` 返回 `[]`，模型收到空目录 | 不报错不卡住；三仓库单目录直接子项最多 281，**只有假 exec 平铺 1500 个文件才触发** |
 
+### search_code 验收抓到的错（09-15，Claude 版）
+
+1. **设计错：只用 `--untracked`**。第一版为了让 agent 新建的文件可见，所有 grep 都带 `--untracked`，结果漏掉已跟踪却匹配 `.gitignore` 的源码
+   （astropy `tokenizer.c` 170 条）。发现方式：验收 R6 断言写死了探针里的总数 33,895，工具给 33,722；逐文件 diff 定位到 2 个文件，
+   再逐个开关二分到 `--untracked`。→ S14。**教训：探针脚本与工具的参数不一致时，数字对不上不是「环境差异」，要追到底**
+2. **解析崩溃**：第一版 `_parse_grep_lines` 按 `\0` 个数分命中 / 上下文（4 段 / 3 段），FITS 数据文件的行文本自带 NUL，
+   `int('')` 抛 `ValueError` 冲出工具。→ S15，改用 `path\0行号\0(列号\0)?文本` 正则，碎片跳过
+3. **验收用例选错路径**：R10 想测压缩 JS 的长行截断，给的是目录 `astropy/extern/jquery`，前 20 条命中全在未压缩文件里，断言失败；
+   改为直接指向 `jquery-3.1.1.min.js`。不是工具 bug
+
 ### 教训（6 条）
 
 1. **恒真/恒假条件累计第 4、5 次**（接 `DESIGN-environment.md` 第 7 条）。对策：**每个守卫都要用合法输入测一次**，不只测它该拦的
@@ -306,6 +354,11 @@ next_actions 引它重新 list。危害低，不处理。
 | **list_files：命令层**（09-15，astropy-12907 容器） | 绝对路径 pathspec `-- /testbed/astropy/io/fits` 输出**相对仓库根**（`astropy/io/fits/card.py`）；`é.py` 默认输出 `"astropy/\303\251.py"`，`-z` 原样；`-z` 输出以 `\0` 结尾（`setup.py\0`）→ `split("\0")[:-1]`；pathspec `[x]` 默认匹配到同级文件 `x`，加 `--literal-pathspecs` 后只剩 `[x]/a.py`；被 ignore 的 `astropy.egg-info` → 空输出 exit 0；新建未跟踪文件可见、`rm` 掉的已跟踪文件仍列出；守卫：文件 → 92、不存在 → 90、目录 → 0 | L4、L5、L9，已知边界 |
 | 降深度轨迹（`_aggregate` 包一层记录每次调用） | django 根目录渲染字符数：depth 4 → 132151、3 → 66922、2 → **8303**、1 → 426；astropy 4 → 48320、3 → 19472、2 → 2965、1 → 481。请求 4 走 4→3→2 停；平铺 1500 个文件请求 2 走 2→1 后截条目 | L2 |
 | **`list_files` 最终验收**（09-15，21 项全过；astropy-12907 + django-15863 + 假 exec） | `_aggregate` 纯函数 2 项；平铺 1500 文件 → 保留 588 条、content 9995 ≤ 10000、summary 写明降深度与省略 912 条；astropy 根目录默认 134 条、depth=3 降为 2；`astropy/io` 81 条全带前缀，尾斜杠结果相同；**输出的文件行原样传给 `read_file`、目录行去掉计数后传给 `list_files` 都成功**；只有文件的目录 next_actions 为空；新建未跟踪文件、`é.py` 原样、`[x]` 只匹配字面；`setup.py` / `nope` / `../etc` 三种错归类正确；被 ignore 的目录 ok 空；django 请求 4/3/2/1 → 2/2/2/1，content 均 ≤ 10000；`ruff check agent/` 全过 | 本模块验收 |
+| **search_code：退出码与方言**（09-15，astropy-12907 + django-15863，git 2.34.1，`LC_CTYPE=POSIX`） | 命中 0 · 没命中 1 · pattern 语法错 128（stderr `fatal: -e option, 'foo(': Unmatched ( or \(`，PCRE 为 `missing closing parenthesis`）· pathspec 不存在 1 且无 stderr · `--max-count` 129 `unknown option`。astropy 匹配行数 BRE / ERE / PCRE / 字面量：`def __init__(` 547 / **128** / **128** / 547；`def __init__\(` **128** / 547 / 547 / 0；`\d+` 259 / **275,601** / 237,399 / 52；`foo\|bar` 0 / 1,637 / 1,637 / 0；`\bclass\b` 5,600 / 5,600 / 5,600 / 0。`-P` 可用，`(?i)` 可用，`(*NO_UTF)` 不认；`self` 耗时 BRE 35ms、PCRE 33ms、`-F` 36ms（django 122 / 135 / 132） | S1、S4、S7、S8 |
+| **search_code：输出格式** | `-n -C1`：命中 `path:75:文本`、上下文 `path-74-文本`、段间 `--`（跨文件也是 `--`）；**`-z` 后两者都成 `path\0行号\0文本`**；加 `--column` 后命中行为 `path\0行号\0列号\0文本`，上下文不变；`-c -z` 为 `path\0计数\n`；文件名 `a:1:b.py` 不加 `-z` 时输出 `zzq/a:1:b.py:1:QTOKEN`；`é.py` 不加 `-z` 转义为 `"zzq/\303\251.py"`；`-e` 以外传 `--version` → `unknown option` | S5、S6、S10 |
+| **search_code：规模** | astropy `import` / `self` / `def ` / `e` 匹配行 9,005 / 33,895 / 18,140 / 451,650，`-C2` stdout 1.5MB / 7.2MB / 6.0MB / 53.5MB，45–85ms；django 13,494 / 93,145 / 28,405 / 566,844，`-C2` stdout 2.1MB / 19.5MB / 9.7MB / 74.2MB，131–225ms；`Unit` 平均每命中 `-C2` 442 字符（astropy）、`import` 155 字符（django） | S3、S4 |
+| **search_code：可见性与二进制** | 新建未跟踪文件：默认不可见，`--untracked` 可见；被 ignore 的 `.pyc` 在 `--untracked` 下仍不可见；工作区改动可见（搜的是工作区不是 index）；**`--untracked` 跳过已跟踪但被 ignore 的文件**：astropy `git ls-files -ci --exclude-standard` 7 个，`self` 总数 33,722 vs 33,895，django 0 个；`--no-index` 对点名的已 ignore 文件照搜；`-I` 下 FITS 仍被当文本（`chandra_time.fits` 31,680 字节含 2,788 个 NUL；【判断】NUL 都在 git 检测的前 8000 字节之后） | S5、S14、S15 |
+| **`search_code` 最终验收**（09-15，51 项全过；纯函数 + 假 env + astropy + django） | 纯函数 10 项（计数去重、NUL 与碎片、max_results=1 丢弃下一段前文、分隔符、context=0 双文件、预算截至少 1 条、5 万字符单行截到 < 700）；假 env 5 项（两遍各自超时 / 意外退出码、pattern 含单引号与 `; rm -rf /` 正确 quote）；参数错 9 项 + 不发命令；真容器：总数等于 `git grep -P -c` 原生计数、**每条显示的命中行与上下文行逐行等于 `read_file` 读到的内容**（R1b R6b R8c R11b）、`def __init__(` 报 128 带 PCRE 原因而 `fixed_string` 得 547、没命中 ok、文件路径 ok、`self` 截到 20 条并列文件分布、`import` + `max_results=1000` + `context=10` 预算截且说明调大无用、未跟踪与怪文件名原样且可喂 `read_file`、`--version` 与 `it's`、压缩 JS 长行截断、`tokenizer.c` 170 条、全仓 33,895；django `e` / `self` / `import` 0.95 / 0.45 / 0.47s 均 ≤ 10000 字符，`e` + `max_results=100000` 0.81s 预算截；`ruff check agent/` 全过 | 本模块验收 |
 | **以下进容器实测**（09-15，astropy-12907 镜像） | | |
 | `test` 守卫 | 不存在 → exit **90**、目录 → exit **91**，stdout 均为空 | 决定 14 |
 | awk `NR`（s=2, e=3） | `'a\nb\nc'` → stdout `'b\nc\n'`、NR=3；`'a\nb\n'` → NR=2；空文件 → stdout `''`、NR=0；`setup.py` NR=68 | 决定 13、15 |
@@ -338,6 +391,6 @@ next_actions 引它重新 list。危害低，不处理。
 | 义务 | 状态 |
 | --- | --- |
 | 每条错误路径有停止条件 | ✅ 09-15 `read_file` 全部 error 的 next_actions 都写明「什么情况下别再试」；另外 3 个工具随写随补 |
-| 拼参数用 `shlex.quote()` | ✅ 09-15 第 3 步：路径 quote；`offset`/`end` 已由第 1 步保证是 int，不 quote |
+| 拼参数用 `shlex.quote()` | ✅ 09-15 第 3 步：路径 quote；`offset`/`end` 已由第 1 步保证是 int，不 quote。`search_code`：pattern、路径、第二遍的每个文件都 quote（验收 F5：`it's; rm -rf /`） |
 | 告诉模型 `cd` 不持久 | ⬜ 属于 system prompt，写 `loop.py` 时落地 |
 | 不用管道或 `set -o pipefail` | ✅ 09-15 第 3 步：命令里没有管道，三段用 `;` 连接 |
