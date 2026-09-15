@@ -102,11 +102,19 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 
 | 步 | 做什么 | 失败时 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 校验 `depth`（`_validate_positive_int`） | `INVALID_ARGUMENT` | ⬜ |
-| 2 | 路径（`_validate_legal_path`，默认 `"."` → `/testbed`） | `INVALID_ARGUMENT` / `PATH_OUTSIDE_ROOT` | ⬜ |
-| 3 | `test -e … \|\| exit 90; test -d … \|\| exit 92; git --literal-pathspecs ls-files -z --cached --others --exclude-standard -- <quoted>` | — | ⬜ |
-| 4 | 分派：超时 / 90 不存在 / 92 不是目录 / 其余非 0 | `TIMEOUT` / `PATH_NOT_FOUND` / `INVALID_ARGUMENT` / `UNCLASSIFIED` | ⬜ |
-| 5 | `stdout.split("\0")[:-1]` 得到相对仓库根的文件列表；为空 → ok 并说明（L9） | — | ⬜ |
+| 1 | 校验 `depth`（`_validate_positive_int`） | `INVALID_ARGUMENT` | ✅ 09-15 本人 |
+| 2 | 路径（`_validate_legal_path`，默认 `"."` → `/testbed`） | `INVALID_ARGUMENT` / `PATH_OUTSIDE_ROOT` | ✅ 09-15 本人 |
+| 3 | `test -e … \|\| exit 90; test -d … \|\| exit 92; git --literal-pathspecs ls-files -z --cached --others --exclude-standard -- <quoted>` | — | ✅ 09-15 本人 |
+| 4 | 分派：超时 / 90 不存在 / 92 不是目录 / 其余非 0 | `TIMEOUT` / `PATH_NOT_FOUND` / `INVALID_ARGUMENT` / `UNCLASSIFIED` | ✅ 09-15 **Claude 写**（与 read_file 第 4 步同构，本人定：重复的知识点不再手写） |
+
+第 1–4 步冒烟（09-15，astropy-12907）：参数错 6 项（`'3'` `0` `True` / `../etc/passwd` `''` `5`）归类正确；
+假 exec 触发超时 → `TIMEOUT`、exit 128 → `UNCLASSIFIED`；真容器 `setup.py` → 92 `INVALID_ARGUMENT`、`nope` → 90 `PATH_NOT_FOUND`，
+`.` `astropy` `astropy.egg-info` 通过分派；`'astropy/a b'` 渲染出的命令 quote 正确；`ruff check agent/` 全过。
+
+第 1–3 步审稿抓到的 bug（本人版）：① `if err := f(...) is not None` 少括号，`err` 绑定成 bool，非法 depth 返回 `True`
+（§六「`:=` 优先级」早有记录，第二次踩）② 定义 `arg_ctx`、使用 `args_ctx`，`NameError`；首次改名只改了定义处，引用处漏改
+—— 两个 bug 叠加时①把②遮住（非法输入永远在第 1 步返回），合法输入跑一次才露出来（教训 1）。
+| 5 | `stdout.split("\0")[:-1]` 得到相对仓库根的文件列表；为空 → ok 并说明（L9） | — | ✅ 09-15 **Claude 写**（同 read_file 第 5 步的 `[:-1]`）；冒烟：`astropy.egg-info`、新建空目录 → ok + 两条 next_actions |
 | 6 | 按 depth 聚合：深度相对 `path` 计；目录行带其下文件总数；超预算则 depth − 1 重算，到 1 仍超则按预算截条目（L2） | — | ⬜ |
 | 7 | 组装 `Observation.ok`：降过深度或截过条目，summary 写明，next_actions 指向对子目录再调 | — | ⬜ |
 
