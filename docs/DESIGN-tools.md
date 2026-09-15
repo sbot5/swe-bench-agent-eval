@@ -1,6 +1,6 @@
 # tools.py 设计档案
 
-> **进行中**。`read_file` 第 1–2 步完成（参数校验 + 路径白名单），2026-09-15，未提交。
+> **进行中 1/6**。`read_file` ✅ 2026-09-15（7 步全部完成，astropy 容器验收 16/16，§六末行）；其余 5 个工具只有规格（§四）。
 > 判断逻辑本人手写；Claude 给思路、跑实测、审代码。**例外**：09-15 的报错文案、docstring、类型标注、格式由 Claude 改（本人要求）。
 >
 > 配套：[`DESIGN-observation.md`](DESIGN-observation.md)（工具怎么说话）· [`DESIGN-environment.md`](DESIGN-environment.md)（工具怎么做事；其 §七 的四条义务压在本模块）
@@ -79,7 +79,6 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 | `'astropy'`（容器，exit 91） | `invalid_argument` | `Path: 'astropy' is a directory, not a file` | 对它 `list_files` 再读里面的文件 · 同一目录重试没用 |
 | 伪造 `timed_out=True` | `timeout` | `Reading 'setup.py' timed out after 60.0s` | 原样重试一次 · 再超时就别读这个文件，调小 limit 没用（awk 仍扫全文，决定 13） |
 | 伪造 exit 2 | `unclassified` | `Reading 'setup.py' failed with unexpected exit code 2` | 原样重试一次 · 同样的 stderr 再出现就跳过这个文件；content 附 exit code 与 stderr（决定 17） |
-
 | `setup.py` offset=69（68 行） | `invalid_argument` | `offset 69 is beyond the end of 'setup.py', which has 68 lines` | 传 1–68 之间的 offset · 文件存在，换文件没用 |
 | 空 `astropy/config/tests/__init__.py`（offset=1 与 5） | —（**ok**） | `Path: '…/__init__.py' is an empty file (0 lines)` | 无；content 为空，render 只输出 summary |
 | 伪造 exit 0 + stderr `'awk: warn\n68\n'` | `unclassified` | `Reading 'setup.py' returned an unreadable line count` | 同决定 17 |
@@ -88,15 +87,9 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 
 第 3–5 步的 content 一律是 `Current args: …, normalised path: '/testbed/…'`（`path_ctx`）。
 
-12 个路径全部归类正确：3 个合法路径放行（`'./astropy/../setup.py'` → `'/testbed/setup.py'`），
+第 2 步 12 个路径全部归类正确：3 个合法路径放行（`'./astropy/../setup.py'` → `'/testbed/setup.py'`），
 `../etc/passwd` `/etc/passwd` `//etc/passwd` `/testbed2/x.py` `/testbedXYZ/../testbed_evil/a.py` 越界，
 `''` `None` `123` `'a\x00b'` 参数错。`ruff check agent/` 全过。
-
-### 悬置（第 3–6 步动手前定）
-
-- ~~D3 / D4 / D5~~ 09-15 已定，见决定 13–15
-- ~~决定 4 的洞~~ 09-15 已定，见决定 19。原记录：某一行本身超过预算时一行都放不下，kept=0，续读 offset 原地不动 → 模型打转、没有停止条件。
-  两个方向：至少保留一行（交给 render 截），或单独截这一行并明说
 
 ## 四、待写工具的规格（尚未实现）
 
@@ -160,7 +153,7 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 | 09-14 把 D3（读法）、D4（不存在 vs 是目录）当作悬置，推荐「`cat` 全文 + Python 切片」、区分失败「只能看 stderr 或先 `test -f`」 | `DESIGN-environment.md` §五 09-08 已有结论：awk `NR` 数行正确；前置 `test` 守卫 + 自定义退出码（90+），不解析文本。Claude 没回查设计档案就出题 | 以 09-08 结论为准。补充：WSL 宿主机上 `cat` 对不存在和是目录**都是 exit 1**（09-08 记录的是 2，命令不同），同样说明退出码分不开 |
 | 决定 4 起初表述成「limit 要不要设上限」 | 读了 `_truncate` 决定三才发现真正的问题是「超长内容由谁截」：render 丢中段，工具给的续读行号失效 | 改问法后选 (b) 按字符预算截停 |
 
-### 代码 bug（5 版审稿，按类归）
+### 第 1–2 步代码 bug（5 版审稿，按类归）
 
 **语法错（6 个）**
 
@@ -237,7 +230,7 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 5. **拼 shell 命令，核对的是渲染后的字符串，不是 Python 源码**（第 21、22 条）。源码里引号开合分在两行就看不出配对；
    对策：一段 shell 程序（awk 脚本）写在同一行 f-string 里，冒烟时把真正发出的 `cmd` 打印出来看一眼
 
-## 六、实测数据（2026-09-14/15，WSL `.venv` Python 3.12.3；shell 部分在 WSL 宿主机，**未进容器**）
+## 六、实测数据（2026-09-14/15，WSL `.venv` Python 3.12.3；上半 shell 在 WSL 宿主机，下半进 astropy-12907 容器）
 
 | 事实 | 值 | 用在哪 |
 | --- | --- | --- |
@@ -266,14 +259,16 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 | astropy 单行超预算 | 排除 `.git` `.so` `.pyc`：行长 > 2000 共 130 行；**> 9992（10000 − 行号前缀 8）共 39 行，其中 `.py` 0 行**；最长 83,520（`wcs/tests/data/j94f05bgq_flt.fits` 第 1 行），其余是 `.fits` / `.hdr` / `jquery-3.1.1.min.js` | 决定 4 的洞：真实存在，但只落在数据文件和压缩 JS 上 |
 | 第 6 步三种停法（`sys.settrace` 抓局部变量，不改代码） | `setup.py` 60/20 → last=68=total，312 字符；`convolution/tests/test_convolve.py` 默认 → last=200、total=1017、8916 字符（limit 截）；`timeseries/periodograms/bls/tests/test_bls.py` 默认 → **last=153**、total=826、**9995** 字符（预算截）；`j94f05bgq_flt.fits` → last=1=total、83528 字符（单行，交给 render） | 决定 4、19；三种停法在第 7 步归一为「`last + 1 ≤ total` 即未读完」 |
 | `break` 后的循环变量 | 停在**被拒的那一行**（`enumerate(..., start=10)` 在第 2 个元素 break → 11）；不 break 则是最后一个元素；空列表则未绑定（NameError） | 第 6 步在放进去的那一刻单独记 `last_line_number`，不用循环变量 |
-| **`read_file` 最终验收**（09-15，16 项全过） | 内容：`setup.py` 60–68、`test_bls.py` 154–287 与 `sed -n` 逐行相同；续读：第一次止于 153、照 next_actions 续读始于 154，不重不漏；limit 截给 `offset=201`；预算截 content 9995 / 9994 ≤ 10000；读到末尾不给续读；fits 单行 render 总长 10237（`_truncate` 截）；空文件 ok；不存在 / 是目录 / 越界归类正确；`ruff check agent/` 全过 | 本模块验收 |
 | astropy 最大的非 .git 文件 | `iers/data/eopc04_IAU2000.62-now` 3,418,080 B；`_wcs…so` 1,666,096 B；`cparser.c` 1,351,496 B | 决定 13 |
+| **`read_file` 最终验收**（09-15，16 项全过） | 内容：`setup.py` 60–68、`test_bls.py` 154–287 与 `sed -n` 逐行相同；续读：第一次止于 153、照 next_actions 续读始于 154，不重不漏；limit 截给 `offset=201`；预算截 content 9995 / 9994 ≤ 10000；读到末尾不给续读；fits 单行 render 总长 10237（`_truncate` 截）；空文件 ok；不存在 / 是目录 / 越界归类正确；`ruff check agent/` 全过 | 本模块验收 |
 
 ## 七、已知边界与待办
 
 - **软链接逃逸**：不处理，见 `DESIGN-environment.md` §七
 - **`//testbed/x` 被误拒**：POSIX 保留开头恰好两个斜杠。只误拒不误放，且报错里有归一化后的路径，不处理
-- ~~`environment.py` 的 `-w` 改用 `REPO_ROOT`~~：09-15 进 astropy-12907 容器冒烟，`pwd` → `'/testbed\n'`，exit 0
+- **`environment.py` 的 `-w` 改用 `REPO_ROOT`**：✅ 09-15 进 astropy-12907 容器冒烟，`pwd` → `'/testbed\n'`，exit 0
+- **验收脚本没进仓库**：16 项验收跑的是会话临时脚本，不可复现。`tests/test_tools.py` 只有规格，其「真容器 vs 假 exec」取舍待定；
+  本次「包一层 env、`execute` 直接返回伪造 `ExecResult`」测了超时与 exit 2，可作假 exec 的原型
 
 ### `DESIGN-environment.md` §七 压在本模块的四条义务 —— 进度
 

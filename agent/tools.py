@@ -91,14 +91,15 @@ def read_file(
     offset: int = DEFAULT_OFFSET,
     limit: int = DEFAULT_LIMIT,
 ) -> Observation:
-    """读容器里的一个文件，按行范围返回，带行号。
+    """读容器里的一个文件：返回第 offset 起最多 limit 行，带行号，超出字符预算提前截停。
 
-    参数错 -> INVALID_ARGUMENT；路径越出 REPO_ROOT -> PATH_OUTSIDE_ROOT。
-    决定、错误契约、实测：docs/DESIGN-tools.md §三。
+    没读完 -> ok + 续读 offset；空文件 -> ok；参数错 / 是目录 / offset 越界 -> INVALID_ARGUMENT；
+    不存在 -> PATH_NOT_FOUND；越出 REPO_ROOT -> PATH_OUTSIDE_ROOT；超时 -> TIMEOUT；其余 -> UNCLASSIFIED。
+    七个步骤、决定、错误契约、实测：docs/DESIGN-tools.md §三。
     """
     args_ctx = f"path:{path!r}, offset: {offset!r}, limit: {limit!r}"
 
-    # 集中校验各参数
+    # 1. offset / limit：先查类型再比大小（决定 5、6）
     for name, val, default_val in [
         ("offset", offset, DEFAULT_OFFSET),
         ("limit", limit, DEFAULT_LIMIT),
@@ -106,10 +107,13 @@ def read_file(
         if (err := _validate_positive_int(name, val, default_val, args_ctx)) is not None:
             return err
 
+    # 2. 路径：通过则拿到归一化后的绝对路径（决定 7–11）
     path_validate_result = _validate_legal_path(path, args_ctx)
     if isinstance(path_validate_result, Observation):
         return path_validate_result
 
+    # 3. test 守卫分出不存在 / 是目录；awk 只打印请求范围，总行数 NR 走 stderr（决定 13、14）
+    #    awk 程序必须整段在同一对单引号里；不加提前 exit，否则 NR 不是总行数
     quoted_path = shlex.quote(path_validate_result)
     end = offset + limit - 1
 
@@ -125,6 +129,7 @@ def read_file(
 
     path_ctx = f"Current args: {args_ctx}, normalised path: {path_validate_result!r}"
 
+    # 4. 分派：超时必须先判，此时 exit_code 是 None（决定 16、17）
     if exec_result.timed_out:
         return Observation.error(
             failure_category=FailureCategory.TIMEOUT,
@@ -175,7 +180,7 @@ def read_file(
             ]
         )
 
-    # 此时exit_code恒为0
+    # 5. 此时 exit_code 恒为 0。awk 每行都补 \n，所以 [:-1] 去掉末尾空串；空文件判断先于越界（决定 1、15、18）
     lines = exec_result.stdout.split("\n")[:-1]
 
     try:
@@ -212,6 +217,7 @@ def read_file(
             ]
         )
 
+    # 6. 加行号，按字符预算截停但至少留 1 行；放进去时记行号，break 后的循环变量是被拒的那行（决定 4、19）
     content = ""
     last_line_number: int | None = None
 
@@ -227,6 +233,7 @@ def read_file(
     assert last_line_number is not None  # 第 5 步保证 lines 至少一行；这行只为类型收窄
     content = content.removesuffix("\n")  # render() 自己在 </content> 前加换行
 
+    # 7. limit 截、预算截都归一为 last < total：没读完就给续读 offset，否则说明已到末尾
     if last_line_number < total_lines:
         return Observation.ok(
             summary=f"Lines {offset}-{last_line_number} of {path!r} ({total_lines} lines in total)",
