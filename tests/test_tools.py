@@ -150,17 +150,33 @@ def test_run_tests_reports_only_the_failures():
 
 
 def test_git_diff_says_so_when_nothing_changed():
-    env = FakeEnvironment([ok(stdout="")])
+    env = FakeEnvironment([ok(stdout=""), ok(stdout="")])
     obs = git_diff(env)
     assert obs.status == ToolStatus.OK and "No changes yet" in obs.summary
-    assert env.exhausted  # 没有改动就不该再跑第二条命令
+    assert env.exhausted  # 没有改动就不该再跑第三条命令去取正文
 
 
 def test_git_diff_separates_untracked_from_the_stat():
-    env = FakeEnvironment([ok(stdout=" f.py | 2 +-\n 1 file changed\n?? stray.txt\n"), ok(stdout="diff --git ...")])
+    env = FakeEnvironment([ok(stdout=" f.py | 2 +-\n 1 file changed\n"),
+                           ok(stdout="stray.txt\0"), ok(stdout="diff --git ...")])
     obs = git_diff(env)
     assert "1 file changed, 1 untracked file(s)" in obs.summary
+    assert "?? stray.txt" in obs.content
     assert any("?? " in action for action in obs.next_actions)
+
+
+def test_git_diff_does_not_let_a_pipe_swallow_the_exit_code():
+    """--stat 失败必须报出来：串成 `a; b` 时 a 的退出码会被 b 顶掉，静默变成「没有改动」（G2）。"""
+    env = FakeEnvironment([ok(stderr="not a git repository", exit_code=128)])
+    obs = git_diff(env)
+    assert obs.status == ToolStatus.ERROR and obs.failure_category == FailureCategory.UNCLASSIFIED
+    assert all("|" not in cmd for cmd in env.commands), "git_diff 的命令里不该有管道"
+
+
+def test_git_diff_survives_an_unreadable_untracked_listing():
+    env = FakeEnvironment([ok(stdout=" f.py | 2 +-\n 1 file changed\n"), ok(exit_code=128), ok(stdout="diff --git ...")])
+    obs = git_diff(env)
+    assert obs.status == ToolStatus.OK and "untracked" not in obs.summary
 
 
 # ---------------------------------------------------------------- 假 env：错误路径

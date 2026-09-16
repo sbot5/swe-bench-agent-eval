@@ -19,13 +19,41 @@
 | S1-dev | gold patch 跑完整 dev 子集 25 条 | ✅ **25/25 resolved**，errors=0，1024s，$0 |
 | S1-holdout | gold patch 跑 holdout 50 条 | ✅ **50/50 resolved**（剔除 1 条判定不稳定的实例后），258s，$0 |
 | S2 | mini-SWE-agent 基线，1 easy + 1 hard | ✅ 2/2 resolved，**$0.06** |
-| S3 | **自建 scaffold** | 🟡 **进行中 2/4 + `tools.py` 3/6** —— `observation.py` 385 行（[设计档案](docs/DESIGN-observation.md)）· `environment.py` 445 行、行为验收 22/22（[设计档案](docs/DESIGN-environment.md)）· `tools.py` 的 `read_file`（astropy 容器验收 16/16）、`list_files`（astropy + django 容器验收 21/21）与 `search_code`（astropy + django 容器 + 假 env 验收 51/51）（[设计档案](docs/DESIGN-tools.md)）。下一步 `apply_patch` |
-| S4 | 两边各跑 dev 25 条对照 | ⬜ |
-| S5 | 冻结后跑 holdout 50 条，出归因表 | ⬜ |
+| S3 | **自建 scaffold 写完，整条链端到端验证** | ✅ **gold 回放 25/25 resolved**，见下 |
+| S3′ | scaffold 接真模型跑 2 条 | 🔴 **被阻塞**：模型 API 中转站在本机被网络拦截（见下） |
+| S4 | 两边各跑 dev 10 条对照 | ⬜ 等 S3′ |
+| S5 | 冻结后跑 dev 25 条正式对照，出归因表 | ⬜ 等 S4 |
 
-> ⚠️ **诚实说明：scaffold 只写了一半。** 已完成的是观察契约（`observation.py`）和
-> 执行层（`environment.py`），两者都有行为验收和设计档案。**六个工具和 ReAct 循环还没写，
-> 所以还没有任何 resolved 率数字。** S4 之前，本仓库能证明的只是评测基础设施可信。
+**scaffold 四个模块全部完成**（各带设计档案）：
+[`observation.py`](agent/observation.py) 观察契约（[DESIGN](docs/DESIGN-observation.md)）·
+[`environment.py`](agent/environment.py) 执行层，行为验收 22/22（[DESIGN](docs/DESIGN-environment.md)）·
+[`tools.py`](agent/tools.py) 六个工具（[DESIGN](docs/DESIGN-tools.md)）·
+[`loop.py`](agent/loop.py) ReAct 循环（[DESIGN](docs/DESIGN-loop.md)）·
+[`run.py`](agent/run.py) 批量入口（[DESIGN](docs/DESIGN-run.md)）。
+测试 85 条：`python -m pytest tests/ -q`（77 条假 env / 纯函数，0.8 秒）、加 `-m slow`（8 条真容器，3.8 秒）。
+
+### 整条链怎么在不花一分钱的情况下证明是对的
+
+把 25 条 gold patch 的每个 hunk 拆成一对 `(old_string, new_string)`，当成一个**假模型**喂给循环
+（[`tests/gold_replay.py`](tests/gold_replay.py)）—— 容器、六个工具、ReAct 消息协议、patch 提取、
+`preds.json` 格式、官方 harness 全部真跑，只有「模型该改哪里」这一件事被换成了已知答案。
+
+| 结果 | 值 |
+| --- | --- |
+| 25 条实例 / 66 个 hunk | **66/66 一次打上，零失败编辑**，8.5 秒（5 并发） |
+| 走官方 harness 评测 | **25/25 resolved**，0 infra failure · 0 ambiguous · 0 empty patch |
+
+**这个数的意义**：链上任何一环有 bug 都到不了 25/25。**接模型之前的未知量只剩模型本身。**
+顺带量到一件事：git 默认三行上下文的 search/replace 锚点，在 66 个真实修复 hunk 上**全部唯一** ——
+这是「`apply_patch` 不提供 `replace_all`」这个决定的实测依据，不是假设。
+
+> 🔴 **S3′ 被环境阻塞（2026-09-16）**：推理用的第三方 API 中转站 `hgapi.dieqiyun.top`
+> 在这台机器上 DNS 解析不了；用 DoH 查到 IP 后直连，TCP 通但 **TLS Client Hello 之后被 RST**，
+> 经本机代理同样失败。域名是活的，【判断】是按域名拦截。**与 scaffold 无关**，
+> 恢复后按 [`docs/DESIGN-run.md`](docs/DESIGN-run.md) §四 的命令依次跑 S3′ / S4 / S5。
+
+> ⚠️ **诚实说明**：到 S4 为止，本仓库能证明的是**评测基础设施和 scaffold 的工程正确性**，
+> 不是它的解题能力。**还没有任何 resolved 率数字**（25/25 是 gold patch 的，不是模型的）。
 
 ---
 
@@ -164,9 +192,14 @@ Verified 已经筛掉了大部分，但 PASS_TO_PASS 里带 `time.sleep` 的测�
    **分辨不出「真实 40%」和「真实 50%」**。所以它只用来抓大的回归，不用来给小改动做 A/B。
 2. **总分不能和排行榜比。** 因为过采样了 hard，总分系统性偏低。**要比只能比分层数字。**
 3. **绝对值只能当上界。** 基准来自公开 GitHub 数据，模型可能在训练中见过，无法排除污染。
-4. **推理走的是第三方 API 中转**，不是官方端点。存在模型被替换的风险，
-   而 mini-SWE-agent 的 trajectory **不记录 API 返回的 `model` 字段**（`preds.json` 里的
-   `model_name_or_path` 是请求名不是返回名），所以这一条目前**无法证伪**。
+4. **推理走的是第三方 API 中转**，不是官方端点，存在模型被替换的风险。
+   mini-SWE-agent 的 trajectory **不记录 API 返回的 `model` 字段**（`preds.json` 里的
+   `model_name_or_path` 是请求名不是返回名），所以**基线那一侧无法证伪**。
+   自建 scaffold 这一侧已经补上：每一步都记 `response.model`，按实例汇总进 `summary.json` 的
+   `returned_models`（`loop.py` 决定 C15）。**两侧口径不同，比较时要记得这一点。**
+5. **我的 scaffold 白拿了一条环境知识**：`run_tests` 的运行器前缀是从实例元数据里抽的
+   （django 怎么跑、sympy 怎么跑），mini-SWE-agent 得自己摸索。
+   评分用的测试目标已经剔干净（75/75 断言过），但「怎么跑测试」这条便宜确实占了。
 
 ---
 
@@ -202,12 +235,26 @@ SWE-bench harness 来自 upstream commit `02e7a74`（2026-09-02），**不入库
 ```
 make_subset.py      分层抽样，一次运行产出 dev 与 holdout 两个不相交的集
 subset_ids.txt      dev  25 条
-holdout_ids.txt     test 50 条
+holdout_ids.txt     test 50 条（一次都没跑过，留给最终报告）
 collect.sh          把证据从 SWE-bench/logs 收进 results/
+agent/
+  observation.py    所有工具的统一返回形状：状态、失败类别、渲染、截断
+  environment.py    一条实例一个 Docker 容器，工具通过 docker exec 在里面执行
+  tools.py          六个工具：list_files search_code read_file apply_patch run_tests git_diff
+  loop.py           ReAct 循环：三个终止条件 + 上下文裁剪 + 异常路径。不认识 Docker，也不认识 SWE-bench
+  model.py          litellm 客户端：重试与错误分类，把「可重试」和「没救了」分开
+  run.py            批量入口：起容器、绑工具、提取 patch、落盘 preds.json
+docs/DESIGN-*.md    每个模块一份设计档案：决策清单 · 实测数据 · 已纠正的错误
+tests/
+  fake_env.py           假执行环境，按脚本回 ExecResult，不起容器
+  gold_replay.py        把 gold patch 拆成 apply_patch 调用，当假模型驱动整条链
+  smoke_gold_replay.py  端到端冒烟的入口（$0）
+  test_*.py             85 条；真容器那 8 条打了 slow marker，默认跳过
 results/
   evaluation/<run_id>/results.json    评测结论
   inference/<run_id>/preds.json       Agent 产出的 patch
   inference/<run_id>/*.traj.json      完整决策链（badcase 归因就靠它）
+  inference/<run_id>/summary.json     每条的停止原因、步数、成本、延迟、返回的模型名
 ```
 
 不入库的：`SWE-bench/`（第三方 clone）、`.venv/`、每实例的 `test_output.txt` 与

@@ -1,8 +1,12 @@
 # tools.py 设计档案
 
-> **进行中 3/6**。`read_file` ✅ 2026-09-15（7 步全部完成，astropy 容器验收 16/16，§六末行）；`list_files` ✅ 09-15（21/21）；
-> `search_code` ✅ 09-15（**Claude 写**，按 09-15 grilling 改定的分工；51/51，§六）；其余 3 个工具只有规格（§四）。
-> 判断逻辑本人手写；Claude 给思路、跑实测、审代码。**例外**：09-15 的报错文案、docstring、类型标注、格式由 Claude 改（本人要求）。
+> **✅ 6/6 完成（2026-09-16）**。`read_file` ✅ 09-15（7 步，astropy 容器验收 16/16，§六）；`list_files` ✅ 09-15（21/21）；
+> `search_code` ✅ 09-15（**Claude 写**，51/51）；`apply_patch` `run_tests` `git_diff` ✅ 09-16（**Claude 写**，§四）。
+> 09-15 之前判断逻辑本人手写，Claude 给思路、跑实测、审代码；
+> **09-16 本人要求「全部做完，明天统一学习整个项目」，此后的代码全部由 Claude 写、本人事后审**。面试口径按这条说。
+>
+> 验收现在是可执行的：`.venv/bin/python -m pytest tests/ -q`（75 条，假 env，0.8 秒）
+> 加 `-m slow`（8 条，真容器，3.3 秒）。DESIGN §二 的四条验收各有对应测试，见 `tests/test_tools.py`。
 >
 > 配套：[`DESIGN-observation.md`](DESIGN-observation.md)（工具怎么说话）· [`DESIGN-environment.md`](DESIGN-environment.md)（工具怎么做事；其 §七 的四条义务压在本模块）
 >
@@ -182,42 +186,113 @@ next_actions 引它重新 list。危害低，不处理。
 - 两遍之间文件被改 → 第二遍命中数与第一遍不同；单 agent 串行调用不会发生，不处理
 - 超过 400 个文件的选择上限由预算推出（每个文件至少「文件名 + 1 行」），django `e` + `max_results=100000` 实测 0.81s 正常（D2）
 
-### apply_patch(...) —— 这一个决定影响 resolved 率超过其他五个加起来
+### apply_patch(path, old_string, new_string) —— ✅ 09-16，Claude 写
 
-三选一：
+> ⚠️ **分工**：本人 09-16 要求「全部做完，明天统一学习整个项目」，所以本工具与 `run_tests` `git_diff`
+> `loop.py` `model.py` `run.py` **全部由 Claude 写**，不是 09-15 grilling 定的那版分工（那版还留着 `loop.py` 控制流给本人手写）。
+> **面试口径据此说**：scaffold 的设计判据、错误契约、方法论取舍是本人定的，代码是 AI 写的、本人逐条审过。
 
-| | 方式 | 代价 |
+规格：把 `path` 里**恰好出现一次**的 `old_string` 换成 `new_string`，返回改动处带行号的上下文。
+造不出新文件，也不追加到文件末尾。实测依据见 §六「apply_patch」段。
+
+编辑方式三选一，选 **(b) search / replace**：
+
+| | 方式 | 代价 | 判决 |
+| --- | --- | --- | --- |
+| (a) | unified diff | token 最省，但模型极易算错行号 → `git apply` 失败。这是失败模式 1 的主要来源 | ❌ |
+| (b) | **search / replace** | 不依赖行号，鲁棒；要求 `old_string` 唯一，token 更贵 | ✅ |
+| (c) | 全文件重写 | 最鲁棒，但大文件 token 爆炸，且容易顺手改坏别处 → 失败模式 3 | ❌ |
+
+理由三条：① 它把「行号算错」这一整类失败**消灭**，而不是缓解；② Aider 用的就是它，有公开工程实证可引用；
+③ 它的失败可精确分类（找不到 / 不唯一），两种都能给明确恢复指令，那正是归因表要的数据。
+
+**(b) 的表达力是实测过的，不是假设**：把 dev 子集 25 条 gold patch 的每个 hunk 拆成一对 `(old_string, new_string)`
+（`tests/gold_replay.py`），**66/66 个 hunk 一次打上，零 `ANCHOR_AMBIGUOUS`**。
+git 默认 `-U3` 的三行上下文，在真实修复上足够唯一 —— 这是 P2「不提供 `replace_all`」的依据。
+
+#### 执行步骤
+
+| 步 | 做什么 | 失败时 |
 | --- | --- | --- |
-| (a) | unified diff | token 最省，但模型极易算错行号 -> git apply 失败。这是失败模式 1 的主要来源 |
-| (b) | search / replace | 不依赖行号，鲁棒；要求 old_string 唯一，token 更贵 |
-| (c) | 全文件重写 | 最鲁棒，但大文件 token 爆炸，且容易顺手改坏别处 -> 失败模式 3 |
+| 1 | 校验 `old_string` / `new_string` 是 str、`old_string` 非空、两串不相同、`new_string` base64 后 ≤ 64KB | `INVALID_ARGUMENT` / `FILE_UNCHANGED`，不发命令 |
+| 2 | 路径（`_validate_legal_path`） | `INVALID_ARGUMENT` / `PATH_OUTSIDE_ROOT` |
+| 3 | `test -e … \|\| exit 90; test -d … && exit 91; test "$(stat -c %s …)" -le 2MB \|\| exit 93; base64 -w0 <quoted>` | — |
+| 4 | 分派：超时 / 90 不存在 / 91 是目录 / 93 过大 / 其余非 0 | `TIMEOUT` / `PATH_NOT_FOUND` / `INVALID_ARGUMENT` / `INVALID_ARGUMENT` / `UNCLASSIFIED` |
+| 5 | `base64.b64decode(validate=True)` 还原字节；解不开 → 说明读回来的不是 base64 | `UNCLASSIFIED` |
+| 6 | `_find_all` 在**字节**上数出现次数（纯函数） | — |
+| 7 | 0 次：先用 `_squeeze_whitespace` 判「只差空白」并报匹配所在行号；否则 `_closest_lines` 给最接近三行 | `ANCHOR_NOT_FOUND` |
+| 8 | > 1 次：`_line_number_at` 报全部出现位置（最多 20 处） | `ANCHOR_AMBIGUOUS` |
+| 9 | 恰好 1 次：`head -c <start> > tmp; printf %s <b64> \| base64 -d >> tmp; tail -c +<end+1> >> tmp; cat tmp > path` | `TIMEOUT` / `IO_ERROR`（exit 94） |
+| 10 | 新内容在宿主机上拼出来，`_render_lines` 给改动处 ±3 行 | — |
 
-建议 (b)。理由三条：
+#### 决策清单
 
-1. 它把「行号算错」这一整类失败消灭，而不是缓解
-2. Aider 用的就是它，有公开工程实证可引用
-3. 它的失败可精确分类（找不到 / 不唯一），两种都能给明确恢复指令，那正是归因表要的数据
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| P1 | 编辑方式 **search / replace** | 见上表；表达力已用 66 个真实 hunk 量过 | unified diff · 全文件重写 |
+| P2 | `old_string` **必须唯一**，不提供 `replace_all` | 66/66 个 gold hunk 在 `-U3` 下就是唯一的，这个参数买不到东西，却多一条「改错了几处」的失败路径 | 加 `replace_all` 开关 |
+| P3 | **不支持创建新文件** | 【实测】dev 子集 25 条 gold patch **0 条**新建文件；支持它要多两条错误路径（文件已存在 / 父目录不存在），换不来可答的面试追问（§七判据） | `old_string=""` 表示创建 |
+| P4 | 文件内容用 **`base64 -w0`** 取回，不用 `cat` | `environment.execute` 用 `errors="replace"` 解码，非 UTF-8 字节会被替换成 U+FFFD，**再编码回去偏移就错位**，切片会切在字符中间。base64 保证字节完全一致，代价是 stdout 涨 33%（走管道，不是 argv，没有长度限制） | `cat`（偏移可能错位） |
+| P5 | 写回用 **`head -c` / `tail -c` 切片再 `cat tmp > path`**，只把新片段经 base64 送进容器 | `docker exec … bash -c <cmd>` 的 cmd 是**一个 argv 元素**，Linux 单参数上限 128KB（`MAX_ARG_STRLEN`）；整文件回传 200KB 源码就爆。切片让前后两段**根本不出容器**。`cat tmp > path` 而不是 `mv`：保住 inode、权限位和属主 —— sympy 的 `bin/test` 是可执行文件（容器实测 mode 不变） | 整文件 base64 回传 · `mv tmp path`（丢权限位） |
+| P6 | 匹配、最近三行、只差空白的判断**全在宿主机纯函数**里 | 沿用 L10：容器只给原始字节，判断逻辑不起容器就能单测 | 在容器里跑一段 python 程序做替换（测不了，且依赖容器里有 python） |
+| P7 | 找不到时**先答「是不是只差空白」**，并报匹配所在行号；否则才给最接近三行（相似度 < 0.5 的不给） | 缩进错是 search/replace 最常见的失败；`_squeeze_whitespace` 不增删行，压过的文本里的偏移换算出来就是**原文行号**。给一堆不像的行比不给更误导 | 只给「最接近三行」（空白错时指向的是别的函数，容器实测过） |
+| P8 | **2 MB 文件上限守卫** | `apply_patch` 是唯一会把整个文件搬到宿主机的工具（`read_file` 靠 awk 行范围从不整读）；没有守卫时一次误调就能把循环挂住 | 不设上限 |
+| P9 | `new_string` base64 后 > 64KB → `INVALID_ARGUMENT`，要求拆成多次编辑 | 离 128KB 单参数上限留一半余量；一次改 64KB 的编辑本来就该拆 | 不校验，让 shell 报 `Argument list too long`（错误信息模型看不懂） |
+| P10 | `old_string == new_string` → **`FILE_UNCHANGED`** | 这个枚举本来就是为它留的；报成功会让模型以为改过了 | 当成功返回 |
+| P11 | 写回失败（exit 94）→ **`IO_ERROR`**，next_actions 要求先 `read_file` 查看当前状态 | 切片写回不是原子的：`cat tmp > path` 中途失败会留下截断的文件，必须告诉模型去看 | `UNCLASSIFIED`（模型不知道文件可能已经坏了） |
+| P12 | 成功时返回**改完之后**的上下文（±3 行），不是改之前的 | 让模型立刻看到自己改出来的样子，直接减少失败模式 3；新内容宿主机算得出来，不用再进一次容器 | 只回 summary · 再调一次容器读 |
+| P13 | 连续失败的**停止条件写在 next_actions 里**，计数由 `loop.py` 落实（决定 C10） | 工具是无状态函数，记不住「这是第几次」；契约文字和实际拦截分两层，两边都有 | 在工具里加状态 |
+| P14 | 错误信息里的参数用 `_preview` 缩成一行 | `old_string` 可能几百行，原样塞进 content 会把预算吃光 | 原样 `repr` |
+| P15 | 不唯一时最多报 **20 处** | 超过 20 处说明锚点选得太泛，列全了也没用 | 全列 |
 
-错误契约（三条都要写）：
+### run_tests(target, timeout) —— ✅ 09-16，Claude 写
 
-- **找不到**：给出最接近的三处（行号 + 内容），要求先 read_file 确认再重试
-- **不唯一**：给出全部出现位置，要求扩大 old_string 使其唯一
-- **连续失败**：同一文件失败 3 次 -> 停，别再改这个文件 ← 停止条件
+规格：在容器的 testbed 环境里跑测试。运行器前缀和日志解析器由 `run.py` **按实例绑定**，模型看不到；
+通过的测试只报数量，失败的报名字，再附原始输出的**尾部**。
 
-### run_tests(target, timeout)
+#### 执行步骤
 
-- **粒度**：支持指定测试文件/模块，不要只有「全跑」。django 全套一次几十秒，全跑会把时间和 token 都吃掉
-- **截断**：只保留失败部分 + 统计行，通过的全丢。通过的测试对模型零信息量
-- **超时**：必须有，死循环的测试会挂死整个 loop
+| 步 | 做什么 | 失败时 |
+| --- | --- | --- |
+| 1 | 校验 `timeout`（≥1 且 ≤ 900）、`target` 是非空 str | `INVALID_ARGUMENT` |
+| 2 | `shlex.split(target)` 拆目标，逐个 `shlex.quote` | 引号不配对 → `INVALID_ARGUMENT` |
+| 3 | `( source /opt/miniconda3/bin/activate && conda activate testbed && <前缀> <目标> ) 2>&1` | — |
+| 4 | 超时先判 | `TIMEOUT` |
+| 5 | 用 harness 的 `log_parser` 解析日志；一条结果都没有 → 目标名错或代码 import 不了 | `UNCLASSIFIED`（附输出尾部） |
+| 6 | 有结果：失败的列名字（最多 25 个），通过的只报数量，再接日志尾部 | — **ok**（测试挂了也是 ok） |
 
-### git_diff()
+#### 决策清单
+
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| T1 | 测试命令**从实例自带的 `eval_script` 里抽**，不按仓库硬编码 | 75 条（subset 25 + holdout 50）只有 **5 种**运行器前缀，但每种的参数都不一样（django 要 `--settings=test_sqlite --parallel 1`，sympy 要 `PYTHONWARNINGS=…`，sphinx 走 `tox --current-env -epy39 --`）。硬编码等于把 7 个仓库的构建知识抄一遍，抄错一条那条实例的 `run_tests` 就是废的 | 按 `repo` 字段查表 · 一律 `pytest`（django / sympy / sphinx 三家都跑不起来） |
+| T2 | `target` 先 `shlex.split` 再**逐个 `shlex.quote`** | `environment.py` §七压下来的义务；实测 `t.py; rm -rf /` 变成 `'t.py;' rm -rf /`，分号成了 pytest 的一个普通参数，没有注入 | 原样拼进命令 · 正则黑名单过滤元字符（补不全） |
+| T3 | `stderr` 用 `2>&1` 并进 `stdout` | `log_parser` 要的是一整份日志；分开存会让 pytest 的进度行和 traceback 错位 | 宿主机上拼 `stdout + stderr`（顺序不对） |
+| T4 | 截断**只留尾部**，不像 `observation._truncate` 那样头尾各留一半 | 测试输出的开头是 session 头（平台、插件版本、rootdir），失败详情和统计行都印在最后。头部信息密度接近零 | 复用 `_truncate` |
+| T5 | `timeout` 硬上限 **900 秒**，超出报错并引导收窄目标 | 死循环的测试会挂死整个 loop；`environment.execute` 的超时只杀宿主机上的 `docker exec` 客户端，容器里的进程还活着（DESIGN-environment §七），所以上限必须由本层守住 | 不设上限 · 让模型自己传任意值 |
+| T6 | 测试失败（退出码非 0）仍然是 **ok** | observation 决定 1、3：`status` 回答的是「工具有没有完成它的活」，不是好消息坏消息。测试挂了正是模型要的信息 | 非 0 → `ERROR`（模型会以为工具坏了） |
+| T7 | 一条测试结果都解析不出来 → **`UNCLASSIFIED`**，next_actions 同时给两条路 | 两种原因长得一样：目标名写错，或者**模型自己的编辑把代码改到 import 不了**。硬塞 `INVALID_ARGUMENT` 会把后者误记成参数错误，归因表就脏了 —— `UNCLASSIFIED` 本来就是「预料外，事后人工重分」的桶 | `INVALID_ARGUMENT` |
+| T8 | **`target` 没有默认值**，必须模型自己指定 | 【方法论】默认跑实例自己的评分目标 = 告诉自己的 Agent grader 用哪些测试文件，**mini baseline 没有这个信息，两边数字就不可比了**。`run.py` 的 `derive_test_command` 因此把评分目标从前缀里剔掉，75 条全部验过没有泄露（`tests/test_run.py`） | 空 target → 跑评分目标（泄露）· 空 target → 跑全套（django 几十秒起） |
+| T9 | 目标写法提示（`target_hint`）按运行器注入工具描述 | django 要点号模块名、其余要文件路径，模型不可能凭空知道。提示按**运行器**给，不引用任何具体实例，所以不泄露 | 不给提示（模型第一次必然写错一次） |
+
+**要主动说出口的一句**：运行器前缀是从实例元数据里抽的，等于我的 scaffold **白拿了**「这个仓库怎么跑测试」这条环境知识，
+而 mini-SWE-agent 得自己摸索。这是我方的一个优势，报告里要写明，不能装作两边条件完全一样。
+
+### git_diff(path=".") —— ✅ 09-16，Claude 写
 
 两个角色别混：
 
-- **harness 提取答案**：在 loop 外面做，不占 Agent 步数
-- **Agent 自查**：提交前看一眼自己改了什么
+- **harness 提取答案**：`run.py` 的 `extract_patch`，在 loop 外面做，不占 Agent 步数
+- **Agent 自查**：本工具，提交前看一眼自己改了什么
 
 保留为 Agent 工具的理由是第二个角色有明确因果：它让模型发现「我改了不该改的文件」，直接减少失败模式 3（PASS_TO_PASS 挂）。
+**执行计划 §八「`git_diff` 到底是哪个」这条悬置项到此关闭：两个都是，但由两段不同的代码承担。**
+
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| G1 | 自查工具与答案提取**分成两段代码** | 提取要在循环之外、不计步数、不受模型影响；自查要计步数、要给 next_actions。同一个函数做两件事，改一个就会碰坏另一个 | 一个函数两用 · 只做提取（模型看不到自己改了什么） |
+| G2 | `--stat` 与未跟踪清单**一条命令取回**，正文单独一条 | 两段形状不同（`?? ` 前缀 vs stat 表格），混不了，省一次往返；正文可能很大，要单独判断预算 | 三条命令 · 用分隔符把三段拼在一条命令里（分隔符可能出现在 diff 正文里） |
+| G3 | 正文超预算**截头部**，并引导按单文件再调 | `--stat` 已经说清楚改了几个文件，正文从头读才对得上；从尾部读会落在最后一个文件中间 | 复用 `_keep_tail`（测试输出才该留尾部） |
 
 ## 五、已纠正的错误
 
@@ -322,6 +397,16 @@ next_actions 引它重新 list。危害低，不处理。
 3. **验收用例选错路径**：R10 想测压缩 JS 的长行截断，给的是目录 `astropy/extern/jquery`，前 20 条命中全在未压缩文件里，断言失败；
    改为直接指向 `jquery-3.1.1.min.js`。不是工具 bug
 
+### 09-16 三个工具写完后抓到的错（5 条）
+
+| # | 错法 | 怎么露出来的 | 改法 |
+| --- | --- | --- | --- |
+| 1 | **`git_diff` 把两条命令串成 `a; b`，还在 b 上挂了管道** —— 整条的退出码是 `sed` 的，`git diff --stat` 失败（不在 git 仓库、坏索引）会被吞掉，工具静默返回「没有改动」 | 写 §七 那张义务表时，为了给「有管道但无害」辩护，去逐条核对左端会不会失败，才发现**根本不是左端的问题，是 `a; b` 让 a 的退出码丢了** | 拆成两条独立 `execute`，各自判退出码；未跟踪清单改用 `ls-files -z` 在宿主机加前缀，管道去掉。补了 `test_git_diff_does_not_let_a_pipe_swallow_the_exit_code`，断言命令里没有 `\|` |
+| 2 | `_keep_tail(text, 0)` 返回**整串** | 写测试时想起 `observation._truncate` 的 `half=0` 特判（§五早有记录），回头查同一个坑 | `text[-limit:] if limit else ""`，并加 `ValueError` 拦负数。**同一个 `text[-0:]` 的坑第二次踩** |
+| 3 | `run_tests` 的 `target` 一开始有默认值，空 target 就跑实例自己的评分目标 | 写 `derive_test_command` 时才意识到：这等于把 grader 用哪些测试文件告诉自己的 Agent，而 mini baseline 没有 —— **不是 bug，是方法论错误，会让两边数字不可比** | `target` 改成必填；前缀里的评分目标一律剔除，75 条全部断言过（T8、R2） |
+| 4 | `graded_test_files` 只取 `diff --git a/X` 一侧 | 在全部 75 条上跑前缀提取，发现 `astropy__astropy-7336` 还剩一个目标没剔掉 | 取 `a/` 和 `b/` 两侧：该条的测试补丁把 `py3_test_quantity_annotations.py` **改名**成评分目标，只看 a 侧看不到新名字 |
+| 5 | `agent/run.py` 里有个 `test_patch_files`，pytest 把它当测试用例收集，报 `fixture 'test_patch' not found` | 跑全套测试时出现一条 ERROR | 改名 `graded_test_files`。**生产代码里的函数不要以 `test_` 开头** |
+
 ### 教训（6 条）
 
 1. **恒真/恒假条件累计第 4、5 次**（接 `DESIGN-environment.md` 第 7 条）。对策：**每个守卫都要用合法输入测一次**，不只测它该拦的
@@ -373,24 +458,37 @@ next_actions 引它重新 list。危害低，不处理。
 | `break` 后的循环变量 | 停在**被拒的那一行**（`enumerate(..., start=10)` 在第 2 个元素 break → 11）；不 break 则是最后一个元素；空列表则未绑定（NameError） | 第 6 步在放进去的那一刻单独记 `last_line_number`，不用循环变量 |
 | astropy 最大的非 .git 文件 | `iers/data/eopc04_IAU2000.62-now` 3,418,080 B；`_wcs…so` 1,666,096 B；`cparser.c` 1,351,496 B | 决定 13 |
 | **`read_file` 最终验收**（09-15，16 项全过） | 内容：`setup.py` 60–68、`test_bls.py` 154–287 与 `sed -n` 逐行相同；续读：第一次止于 153、照 next_actions 续读始于 154，不重不漏；limit 截给 `offset=201`；预算截 content 9995 / 9994 ≤ 10000；读到末尾不给续读；fits 单行 render 总长 10237（`_truncate` 截）；空文件 ok；不存在 / 是目录 / 越界归类正确；`ruff check agent/` 全过 | 本模块验收 |
+| **以下 09-16 实测** | | |
+| **apply_patch：gold patch 的表达力**（dev 子集 25 条，`tests/gold_replay.py`） | 25 条 gold patch 共 **66 个 hunk**，拆成 `(old_string, new_string)` 后**66/66 一次打上，0 个 `ANCHOR_AMBIGUOUS`、0 个 `ANCHOR_NOT_FOUND`**；改 1 个文件的 19 条、2 个 3 条、3 个 1 条、4 个 2 条；**新建文件的 0 条** | P1、P2、P3 |
+| **apply_patch：权限位**（astropy-12907 容器） | `astropy/table/operations.py` 原 mode **100755**；`head -c`/`tail -c` 切片后 `cat tmp > path` 回写，`stat -c %a` 前后相同，`git diff` 的 index 行仍是 `100755` | P5（`mv` 会变成 100644） |
+| **apply_patch：只差空白的报法** | `'def  _join('`（两个空格）→ 压掉空白后匹配 1 处，报「once whitespace is ignored」并给**匹配所在行 1058**；同一输入若只走 `_closest_lines`，给的是不相干的第 170 行 `def join_func(sc1, sc2):` | P7 —— 这条是改进前后对比，不是假设 |
+| **apply_patch：不唯一** | `'    return'` 在 `operations.py` 出现 **27 次**，报前 20 处行号 + 该行内容，文件未被改动（随后 `git_diff` 为空） | P2、P15 |
+| **run_tests：运行器前缀**（subset 25 + holdout 50 = 75 条） | 只有 **5 种**前缀：`./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1`（27）· `pytest -rA`（19）· `PYTHONWARNINGS=ignore::UserWarning,ignore::SyntaxWarning bin/test -C --verbose`（14）· `tox --current-env -epy39 -v --`（12）· `pytest -rA -vv -o console_output_style=classic`（3）。**75/75 都能从 `eval_script` 抽出前缀且把评分目标剔干净**（`tests/test_run.py::test_no_graded_test_target_survives_in_any_prefix`） | T1、T8 |
+| **run_tests：三条真实路径**（astropy-12907 容器） | ① 正常：`astropy/utils/tests/test_misc.py` → `All 7 test(s) passed (7 passed)`；② 把 `isiterable` 改成 `raise RuntimeError` 后重跑 → pytest 在 **conftest 收集阶段就崩**（exit 1，没有一条测试结果），归 `UNCLASSIFIED` 并把 traceback 原样给模型；③ 不存在的目标 → 同样 0 条结果 | T7 —— 两种原因输出形状一样，所以不能硬归 `INVALID_ARGUMENT` |
+| **注入防护**（假 env） | `read_file('a.py; rm -rf /')` → 命令里是 `'/testbed/a.py; rm -rf /'`（整串在单引号内）；`run_tests('t.py; rm -rf /')` → `pytest -rA 't.py;' rm -rf /`，分号被引号包住，`rm` 成了 pytest 的普通参数 | T2；验收 4 的可执行版 |
+| **端到端（gold 回放）** | 25 条实例、5 并发、**8.5 秒**跑完（每条 0.6–2.8s，纯工具链无模型）；产出的 `preds.json` 走官方 harness：**25/25 resolved，0 infra failure、0 ambiguous、0 empty patch**（`results/evaluation/gold-replay-s25/results.json`） | 整条链的正确性；接模型前的未知量只剩模型本身 |
+| **测试套件规模** | 75 条假 env / 纯函数用例 **0.77s**；8 条真容器用例 **3.29s**（同一个容器 module 级复用） | §七 的「验收脚本没进仓库」到此关闭 |
 
 ## 七、已知边界与待办
 
 - **软链接逃逸**：不处理，见 `DESIGN-environment.md` §七
 - **`//testbed/x` 被误拒**：POSIX 保留开头恰好两个斜杠。只误拒不误放，且报错里有归一化后的路径，不处理
 - **`environment.py` 的 `-w` 改用 `REPO_ROOT`**：✅ 09-15 进 astropy-12907 容器冒烟，`pwd` → `'/testbed\n'`，exit 0
-- **验收脚本没进仓库**：read_file 16 项、list_files 21 项都是会话临时脚本，不可复现。
-  **`tests/test_tools.py` 的取舍（09-15 定，随 list_files 方案一并认可）：三层都要，按能不能在真容器触发来分** ——
-  ① 纯函数（`_aggregate` 这类，L10）直接喂列表测，不起容器；② 超时、意外退出码、平铺上千文件等真容器造不出或造起来贵的，
-  用假 env（`execute` 返回伪造 `ExecResult`，list_files 验收里的 `FakeEnv` 即原型）；③ 其余走真容器（astropy-12907）。
+- ✅ **验收脚本进仓库（09-16 完成）**：三层取舍（09-15 定）已落成 —— ① 纯函数直接喂列表测；
+  ② 超时、意外退出码、平铺上千文件等真容器造不出或造起来贵的，用假 env（`tests/fake_env.py`）；
+  ③ 其余走真容器（`tests/test_container_smoke.py`，打 `slow` marker，`pytest.ini` 里默认跳过）。
   否决：只用真容器（超时 / exit 128 触发不了）· 只用假 exec（`-z`、`--literal-pathspecs`、`test` 守卫这类命令层事实测不到）。
-  **待办**：把两份验收脚本整理进 `tests/test_tools.py`，真容器用例打 marker 以便跳过
+  **代价**：09-14/15 那两份会话临时脚本（read_file 16 项、list_files 21 项、search_code 51 项）**没有逐条搬进来**，
+  §六的记录是它们唯一的痕迹；新套件是按四条验收重写的，覆盖的边界不完全一样。
+- **apply_patch 的写回不是原子的**：`cat tmp > path` 中途失败会留下截断的文件。已在 `IO_ERROR` 的 next_actions 里
+  要求模型先 `read_file` 查看当前状态（P11），但没有回滚。做回滚要先备份整个文件，和 P5「整文件不出容器」冲突，不做
+- **`run_tests` 白拿了运行器知识**：见 §四 T8 下面那段。报告里要写明，不能装作两边条件一样
 
 ### `DESIGN-environment.md` §七 压在本模块的四条义务 —— 进度
 
 | 义务 | 状态 |
 | --- | --- |
-| 每条错误路径有停止条件 | ✅ 09-15 `read_file` 全部 error 的 next_actions 都写明「什么情况下别再试」；另外 3 个工具随写随补 |
-| 拼参数用 `shlex.quote()` | ✅ 09-15 第 3 步：路径 quote；`offset`/`end` 已由第 1 步保证是 int，不 quote。`search_code`：pattern、路径、第二遍的每个文件都 quote（验收 F5：`it's; rm -rf /`） |
-| 告诉模型 `cd` 不持久 | ⬜ 属于 system prompt，写 `loop.py` 时落地 |
-| 不用管道或 `set -o pipefail` | ✅ 09-15 第 3 步：命令里没有管道，三段用 `;` 连接 |
+| 每条错误路径有停止条件 | ✅ 09-16 六个工具全部 error 的 next_actions 都写明「什么情况下别再试」；`tests/test_tools.py` 用 20 条参数化用例逐条断言 |
+| 拼参数用 `shlex.quote()` | ✅ 09-16 六个工具全覆盖：路径、pattern、第二遍的每个文件、`run_tests` 的每个目标、`apply_patch` 的 base64 串都 quote；整数参数由第 1 步保证是 int，不 quote |
+| 告诉模型 `cd` 不持久 | ✅ 09-16 在 `loop.py` 的 system prompt 里落地：「There is no shell: if a tool cannot do it, it cannot be done」—— 比解释 `cd` 更彻底，模型根本没有发 shell 命令的途径 |
+| 不用管道或 `set -o pipefail` | ✅ 09-16。唯一剩下的管道是 `apply_patch` 的 `printf %s '<b64>' \| base64 -d`：左端是常量串的内建命令，不会失败，右端的失败由 `\|\| exit 94` 接住。`run_tests` 的 `2>&1` 是重定向不是管道。**`git_diff` 第一版踩了这条**，见 §五 |

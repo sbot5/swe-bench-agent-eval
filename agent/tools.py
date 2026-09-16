@@ -1328,11 +1328,9 @@ def git_diff(env: DockerEnvironment, path: str = ".") -> Observation:
         "If it fails again the same way, stop calling git_diff and continue with the task; it is only a self-check.",
     ]
 
-    # 1. 统计行和未跟踪清单一次取回：两段形状不同，混不了（G2）
-    stat_result = env.execute(
-        f"git --no-pager --literal-pathspecs diff --stat -- {quoted_path}; "
-        f"git --literal-pathspecs ls-files --others --exclude-standard -- {quoted_path} | sed 's|^|?? |'"
-    )
+    # 1. 统计行和未跟踪清单**分两条命令**取：两段都以空格开头，混在一条 stdout 里分不开；
+    #    串成 `a; b` 还会让 a 的退出码被 b 顶掉（不在 git 仓库时会静默报「没有改动」）（G2）
+    stat_result = env.execute(f"git --no-pager --literal-pathspecs diff --stat -- {quoted_path}")
 
     if stat_result.timed_out or stat_result.exit_code != 0:
         return Observation.error(
@@ -1343,9 +1341,14 @@ def git_diff(env: DockerEnvironment, path: str = ".") -> Observation:
             next_actions=retry_actions,
         )
 
-    all_lines = stat_result.stdout.strip().split("\n") if stat_result.stdout.strip() else []
-    untracked = [line for line in all_lines if line.startswith("?? ")]
-    stat_lines = [line for line in all_lines if not line.startswith("?? ")]
+    others_result = env.execute(
+        f"git --literal-pathspecs ls-files -z --others --exclude-standard -- {quoted_path}"
+    )
+    # 未跟踪清单取不到不算失败：它只是自查里的附注，不值得让整个 git_diff 报错
+    others = others_result.stdout.split("\0")[:-1] if not others_result.timed_out and others_result.exit_code == 0 else []
+
+    stat_lines = stat_result.stdout.strip().split("\n") if stat_result.stdout.strip() else []
+    untracked = [f"?? {path}" for path in others]
     stat = "\n".join(stat_lines + untracked)
 
     if not stat_lines:
