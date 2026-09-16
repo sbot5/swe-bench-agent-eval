@@ -47,10 +47,11 @@
 顺带量到一件事：git 默认三行上下文的 search/replace 锚点，在 66 个真实修复 hunk 上**全部唯一** ——
 这是「`apply_patch` 不提供 `replace_all`」这个决定的实测依据，不是假设。
 
-> 🔴 **S3′ 被环境阻塞（2026-09-16）**：推理用的第三方 API 中转站 `hgapi.dieqiyun.top`
-> 在这台机器上 DNS 解析不了；用 DoH 查到 IP 后直连，TCP 通但 **TLS Client Hello 之后被 RST**，
-> 经本机代理同样失败。域名是活的，【判断】是按域名拦截。**与 scaffold 无关**，
-> 恢复后按 [`docs/DESIGN-run.md`](docs/DESIGN-run.md) §四 的命令依次跑 S3′ / S4 / S5。
+> 🔴 **S3′ 被环境阻塞（2026-09-16）**：挂着学校 VPN 时连不上推理用的第三方 API 中转站 ——
+> DNS 解不出，DoH 查到 IP 后直连 TCP 通但 **TLS Client Hello 之后被 RST**，经本机代理同样失败。
+> **域名是活的，与 scaffold 无关**；断开 VPN 即可。排查次序留档在
+> [`docs/DESIGN-loop.md`](docs/DESIGN-loop.md) §六，恢复后按
+> [`docs/DESIGN-run.md`](docs/DESIGN-run.md) §四 依次跑 S3′ / S4 / S5。
 
 > ⚠️ **诚实说明**：到 S4 为止，本仓库能证明的是**评测基础设施和 scaffold 的工程正确性**，
 > 不是它的解题能力。**还没有任何 resolved 率数字**（25/25 是 gold patch 的，不是模型的）。

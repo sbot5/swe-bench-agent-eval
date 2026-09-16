@@ -87,19 +87,26 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 - 🔴 **40 步够不够** —— mini 用了 11 和 20 步，但那是它的工具粒度；六个有类型的工具可能更费步数
 - `returned_models` 到底回什么
 
-## 六、⚠️ 09-16 的阻塞：模型 API 连不上
+## 六、⚠️ 09-16 的阻塞：挂着学校 VPN 时模型 API 连不上
+
+**结论：跑评测前先断开 Monash VPN。** 原因是本人当场确认的，不是推断。
+
+排查过程留档（同类症状下次照这个次序查）：
 
 | 检查 | 结果 |
 | --- | --- |
-| 本机 DNS 解析 `hgapi.dieqiyun.top` | ❌ 超时；`api.github.com` 正常 |
-| 公共 DNS（8.8.8.8 / 1.1.1.1 / 223.5.5.5） | ❌ 全部超时（这台机器出站 53 端口被拦） |
-| DNS over HTTPS（`dns.google/resolve`） | ✅ `38.34.175.121`，**域名活着** |
-| 直连 `38.34.175.121:443` | TCP 连得上，**TLS Client Hello 之后被 RST** |
-| 经本机 Clash（127.0.0.1:7890） | ❌ 同样 TLS 失败（exit 35） |
+| 本机 DNS 解析 `hgapi.dieqiyun.top` | ❌ 超时；`api.github.com` 正常 → **不是断网** |
+| 公共 DNS（8.8.8.8 / 1.1.1.1 / 223.5.5.5） | ❌ 全部超时 → 出站 53 端口也被接管了 |
+| DNS over HTTPS（`dns.google/resolve`） | ✅ `38.34.175.121` → **域名活着，服务端没挂** |
+| 直连 `38.34.175.121:443` | TCP 连得上，**TLS Client Hello 之后被 RST** → 按域名拦，不是按 IP |
+| 经本机 Clash（127.0.0.1:7890） | ❌ 同样 TLS 失败（exit 35） → 代理没绕过去 |
 | Tailscale | 在跑，但没有可用的 exit node |
 
-【判断】域名解析得到、TCP 通、**发出 SNI 之后才被重置** —— 这是按域名拦截的特征，不是服务端挂了。
-所以 S3 / S4 / S5 三个要调模型的阶段全部卡住，与 scaffold 本身无关。
+🔑 **线索一直摆在 `/etc/resolv.conf` 里**：`search monash.edu tailc797d0.ts.net` ——
+WSL 继承了 Windows 的 DNS 后缀，说明当时挂着学校 VPN。查了六项才想到看这一行。
+**下次先看 `resolv.conf` 的 search 域和默认路由，再去 curl。**
+
+S3 / S4 / S5 三个要调模型的阶段因此全部卡住，**与 scaffold 本身无关**。
 
 **恢复之后要跑的第一条命令**（其余见 `DESIGN-run.md` §四）：
 
