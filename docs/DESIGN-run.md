@@ -80,3 +80,35 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s5-mine --workers 4
 ```
 
 **冻结 scaffold 的意思**：S5 之前打一个 git tag，之后只许改文档不许改 `agent/`。
+
+## 五、`report.py` —— badcase 归因表
+
+```bash
+PYTHONPATH=. .venv/bin/python -m agent.report --run-id s5-mine --compare s5-baseline
+```
+
+读 harness 的每实例 `report.json`（`patch_exists` / `patch_successfully_applied` / `resolved` /
+`infra_failure` / `tests_status`）+ `summary.json`（`stop_reason` / 步数 / 工具错 / 成本），
+写出 `results/evaluation/<run-id>/attribution.{json,md}`。
+
+| 桶 | 判据 | 修法方向 |
+| --- | --- | --- |
+| `resolved` | `resolved: true` | — |
+| `M0_undecidable` | **gold run 里这条也没 resolved** | 不是 Agent 的问题，进 KNOWN_BAD |
+| `M1a_no_patch` | `patch_is_None` 或 `patch_exists: false` | 看 `stop_reason`：`max_steps` = 步数不够或在绕圈；`finished` = 它自以为做完了 |
+| `M1b_patch_rejected` | `patch_successfully_applied: false` | 收紧「编辑前怎么看文件」 |
+| `M2_fail_to_pass` | F2P 有 failure | 最大的一桶，逐条读 trajectory |
+| `M3_regression` | F2P 全过但 P2P 有 failure | 提交前先跑邻近测试 |
+| `E1_infra` / `E2_ambiguous` | harness 自己的两个字段 | 环境的锅，单列 |
+
+| # | 决定 | 判据 |
+| --- | --- | --- |
+| R11 | **`M0` 必须排在 `M3` 前面判** | 两者的 `report.json` **长得一模一样**（F2P 过、P2P 挂），但归因完全相反：M3 是 Agent 改坏了，M0 是这条实例本身判不了。**区分办法只有一个：先跑 gold** —— 这就是 S1 存在的理由。`tests/test_report.py` 用同一份 report 加/不加 gold 基线断言了这个分辨 |
+| R12 | 把执行计划的「模式 1」拆成 `M1a` / `M1b` | mini 只有一个 bash 工具，它总会产出点什么，所以原表没有「根本没产出 patch」这一桶。自建 scaffold 会：模型调 `finish` 时可能一个字都没改。两者的改法完全不同（改 prompt vs 改 `apply_patch`） |
+| R13 | 两边都挂时算 `M2` 不算 `M3` | 还没修好就谈不上「引入回归」 |
+| R14 | 既没 resolved 又挑不出挂掉的测试 → `E2_ambiguous`，**不当成功** | 这种情况说明 harness 的判定和测试明细对不上，要人去看，不能悄悄算过 |
+| R15 | 结论写进 `results/`，不留在 `logs/` | `logs/` 在 `.gitignore` 里，随时会被清掉 |
+| R16 | 表里只放数，名字列在下面的「逐条」表 | 一行一实例的表在 25 条上就读不动了 |
+
+**09-16 验证**：拿 gold 回放的结果跑一遍，25 条全部落进 `resolved` 桶、`stop_reason` 全是 `finished`、
+工具错 0 —— 归因表本身也有回归锚点（`tests/test_report.py` 最后一条）。

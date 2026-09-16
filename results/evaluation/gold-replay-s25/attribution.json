@@ -1,0 +1,283 @@
+{
+  "run_id": "gold-replay-s25",
+  "counts": {
+    "resolved": 25
+  },
+  "rows": [
+    {
+      "instance_id": "astropy__astropy-14182",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 3,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 2222,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "astropy__astropy-7166",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 3,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1241,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-10554",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 2,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1619,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-11138",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 7,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 7656,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-11163",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 570,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-11728",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 6,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 3340,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-12039",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 2,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1271,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-12262",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 716,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-13512",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 3,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1319,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-14631",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 7,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 5226,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "django__django-15863",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 463,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24970",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1602,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "pydata__xarray-4356",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 840,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "pylint-dev__pylint-4551",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 7,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 7045,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "pylint-dev__pylint-8898",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 5,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 2772,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-11510",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 3,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 2999,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-7889",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 700,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8638",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 687,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-9698",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 624,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-9711",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 2,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1318,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sympy__sympy-13757",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 394,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sympy__sympy-13852",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 4,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 2627,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sympy__sympy-17630",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 625,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sympy__sympy-18211",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 969,
+      "f2p_failed": [],
+      "p2p_failed": []
+    },
+    {
+      "instance_id": "sympy__sympy-24661",
+      "mode": "resolved",
+      "stop_reason": "finished",
+      "steps": 1,
+      "tool_errors": 0,
+      "cost": 0.0,
+      "patch_chars": 1219,
+      "f2p_failed": [],
+      "p2p_failed": []
+    }
+  ]
+}

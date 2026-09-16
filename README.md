@@ -29,8 +29,8 @@
 [`environment.py`](agent/environment.py) 执行层，行为验收 22/22（[DESIGN](docs/DESIGN-environment.md)）·
 [`tools.py`](agent/tools.py) 六个工具（[DESIGN](docs/DESIGN-tools.md)）·
 [`loop.py`](agent/loop.py) ReAct 循环（[DESIGN](docs/DESIGN-loop.md)）·
-[`run.py`](agent/run.py) 批量入口（[DESIGN](docs/DESIGN-run.md)）。
-测试 85 条：`python -m pytest tests/ -q`（77 条假 env / 纯函数，0.8 秒）、加 `-m slow`（8 条真容器，3.8 秒）。
+[`run.py`](agent/run.py) 批量入口 · [`report.py`](agent/report.py) badcase 归因表（[DESIGN](docs/DESIGN-run.md)）。
+测试 110 条：`python -m pytest tests/ -q`（94 条假 env / 纯函数，2.4 秒）、加 `-m slow`（16 条真容器，5.4 秒）。
 
 ### 整条链怎么在不花一分钱的情况下证明是对的
 
@@ -244,17 +244,19 @@ agent/
   loop.py           ReAct 循环：三个终止条件 + 上下文裁剪 + 异常路径。不认识 Docker，也不认识 SWE-bench
   model.py          litellm 客户端：重试与错误分类，把「可重试」和「没救了」分开
   run.py            批量入口：起容器、绑工具、提取 patch、落盘 preds.json
+  report.py         badcase 归因表：按失败模式分桶，每桶配一句修法方向
 docs/DESIGN-*.md    每个模块一份设计档案：决策清单 · 实测数据 · 已纠正的错误
 tests/
   fake_env.py           假执行环境，按脚本回 ExecResult，不起容器
   gold_replay.py        把 gold patch 拆成 apply_patch 调用，当假模型驱动整条链
   smoke_gold_replay.py  端到端冒烟的入口（$0）
-  test_*.py             85 条；真容器那 8 条打了 slow marker，默认跳过
+  test_*.py             110 条；真容器那 16 条打了 slow marker，默认跳过
 results/
-  evaluation/<run_id>/results.json    评测结论
-  inference/<run_id>/preds.json       Agent 产出的 patch
-  inference/<run_id>/*.traj.json      完整决策链（badcase 归因就靠它）
-  inference/<run_id>/summary.json     每条的停止原因、步数、成本、延迟、返回的模型名
+  evaluation/<run_id>/results.json       评测结论
+  evaluation/<run_id>/attribution.md     badcase 归因表（report.py 产出）
+  inference/<run_id>/preds.json          Agent 产出的 patch
+  inference/<run_id>/*.traj.json         完整决策链（badcase 归因就靠它）
+  inference/<run_id>/summary.json        每条的停止原因、步数、成本、延迟、返回的模型名
 ```
 
 不入库的：`SWE-bench/`（第三方 clone）、`.venv/`、每实例的 `test_output.txt` 与
