@@ -51,6 +51,27 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s4-mine --limit 10 --workers
 🔑 **25/25 这个数的意义**：容器生命周期、六个工具、ReAct 循环的消息协议、patch 提取、`preds.json` 格式、
 harness 吃不吃得进去 —— 任何一环有 bug 都到不了 25/25。**接模型之前的未知量只剩模型本身。**
 
+### S3′：第一次接真模型（2026-09-16）
+
+`--run-id s3-smoke --limit 2 --workers 2 --model openai/deepseek-flash`
+
+| 实例 | stop_reason | steps | api_calls | patch | tool_errors | 耗时 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `sphinx-doc__sphinx-9698` | `finished` | 22 | 18 | **1191 字符** | 0 | 63.4s |
+| `django__django-13512` | `max_steps` | 53 | 40 | **0（空）** | 2 | 92.6s |
+
+**S3 的验收是「只要求产出合法 patch，不要求 resolved」，1/2 达成，链路判通** ——
+模型调用 → 工具执行 → patch 提取 → `preds.json` 落盘整条链在真模型下工作。
+
+三条要带走的：
+
+- **供应商换成了 DeepSeek**。原中转站两个端点都不透传 `tools`，见 `DESIGN-loop.md` §七。
+  `loop.py` / `tools.py` / `run.py` 一行没改，只改了 `.env`。
+- 🔴 **`cost=$0.0000` 是假的**：litellm 价格表不认识 `deepseek-flash`，`--cost-limit` 这层保护失效，
+  止损只剩 `--max-steps` 和 `--wall-clock-limit`。**报告里不许拿这个 0 当成本数字。**
+- `django-13512` 40 次调用用满仍是空 patch，而 `tool_errors` 只有 2 ——
+  是探索没收敛，不是工具坏了。步数够不够等 S4 的 10 条再定（`DESIGN-loop.md` §五）。
+
 ## 四、跑哪个集 —— 还没花的那颗子弹
 
 | 集合 | 条数 | 用途 |

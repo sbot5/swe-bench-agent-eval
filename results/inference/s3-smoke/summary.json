@@ -1,0 +1,46 @@
+{
+  "run_id": "s3-smoke",
+  "model": "openai/deepseek-flash",
+  "config": {
+    "max_steps": 40,
+    "cost_limit": 0.5,
+    "wall_clock_limit": 1800.0,
+    "keep_full_observations": 5,
+    "max_consecutive_tool_errors": 5,
+    "max_file_edit_failures": 3,
+    "max_empty_replies": 2
+  },
+  "elapsed_seconds": 92.6,
+  "instances": [
+    {
+      "instance_id": "django__django-13512",
+      "stop_reason": "max_steps",
+      "steps": 53,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 85.5,
+      "wall_seconds": 92.6,
+      "patch_chars": 0,
+      "tool_errors": 2,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-9698",
+      "stop_reason": "finished",
+      "steps": 22,
+      "api_calls": 18,
+      "cost": 0.0,
+      "loop_seconds": 56.5,
+      "wall_seconds": 63.4,
+      "patch_chars": 1191,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    }
+  ]
+}

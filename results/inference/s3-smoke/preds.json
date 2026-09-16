@@ -1,0 +1,12 @@
+{
+  "sphinx-doc__sphinx-9698": {
+    "instance_id": "sphinx-doc__sphinx-9698",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py\nindex cd02eaad5..b848f8af7 100644\n--- a/sphinx/domains/python.py\n+++ b/sphinx/domains/python.py\n@@ -788,7 +788,12 @@ class PyMethod(PyObject):\n             if modname and self.env.config.add_module_names:\n                 clsname = '.'.join([modname, clsname])\n         except ValueError:\n-            if modname:\n+            if 'property' in self.options:\n+                if modname:\n+                    return _('%s (in module %s)') % (name, modname)\n+                else:\n+                    return name\n+            elif modname:\n                 return _('%s() (in module %s)') % (name, modname)\n             else:\n                 return '%s()' % name\n@@ -796,7 +801,7 @@ class PyMethod(PyObject):\n         if 'classmethod' in self.options:\n             return _('%s() (%s class method)') % (methname, clsname)\n         elif 'property' in self.options:\n-            return _('%s() (%s property)') % (methname, clsname)\n+            return _('%s (%s property)') % (methname, clsname)\n         elif 'staticmethod' in self.options:\n             return _('%s() (%s static method)') % (methname, clsname)\n         else:\n"
+  },
+  "django__django-13512": {
+    "instance_id": "django__django-13512",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}

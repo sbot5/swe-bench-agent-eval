@@ -39,7 +39,7 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 
 | # | 决定 | 判据 | 否决 |
 | --- | --- | --- | --- |
-| C1 | **用供应商原生 function calling**（`tools=` + `tool_calls`），不自己定文本协议 | 自己写解析器要处理「模型把 JSON 写坏了」「代码块围栏不闭合」两类新失败，而「我写了个解析器」在面试里不值钱；原生调用的 `tool_calls` 直接进 trajectory，归因表不用先做一次文本还原。⚠️ **未实测**：中转站到 09-16 为止连不上（见 §六），这条要在第一次真跑时确认 | 文本协议（mini 的做法，它只有一个 bash 工具才划算） |
+| C1 | **用供应商原生 function calling**（`tools=` + `tool_calls`），不自己定文本协议 | 自己写解析器要处理「模型把 JSON 写坏了」「代码块围栏不闭合」两类新失败，而「我写了个解析器」在面试里不值钱；原生调用的 `tool_calls` 直接进 trajectory，归因表不用先做一次文本还原。🔴 **09-16 实测：当前中转站不支持** —— 请求体里只要出现 `tools` 字段就静默挂起（`tool_choice:"none"` 同样挂），见 §七。**被否掉的是这个供应商，不是 C1 本身**；换一个支持 function calling 的供应商，C1 原样成立 | 文本协议（mini 的做法，它只有一个 bash 工具才划算） |
 | C2 | **`finish` 是终止信号，不是第七个工具** | 执行计划 §四 说「不要加第 7 个工具」，指的是**能力**工具；「主动完成」是三个终止条件之一，必须有落点。它不改变世界，也不返回观察 | 「没有 tool_call 就算做完」（模型有时只是闲聊，会误判完成） |
 | C3 | 工具表由 `build_tool_schemas(target_hint)` 生成，`run_tests` 的目标写法按仓库替换 | django 要点号模块名、其余要文件路径，模型不可能凭空知道；提示按**运行器**给，不引用任何具体实例，所以不泄露评分目标（DESIGN-tools T9） | 写死一种写法 · 把实例的评分目标当例子（泄露） |
 | C4 | 三个终止条件：**步数 40 / 成本 $0.50 / 主动 `finish`**，另加墙钟 1800 秒 | mini 的配置是 `step_limit: 250` / `cost_limit: 3.`【实测 `swebench.yaml:112-113`】，但 S2 实测它实际只用了 **11 步和 20 步**。40 步给了 2 倍余量又不至于烧钱；$0.50 是实测单条 $0.03 的 **16 倍**。墙钟是 mini 没有的：`environment.execute` 的超时只杀宿主机上的 `docker exec` 客户端，容器里的进程还活着（DESIGN-environment §七），没有墙钟上限一条卡住的实例能拖垮整批 | 抄 mini 的 250 步（跑不到，白等）· 不设墙钟 |
@@ -81,15 +81,23 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 
 **测不到的（要等第一次真跑）**：
 
-- 🔴 **中转站支不支持 function calling** —— C1 整条建立在这上面。09-16 连不上，未验证
+- ✅ **中转站支不支持 function calling** —— 09-16 已测：**不支持**，失败方式是静默挂起而不是报错，见 §七
 - 🔴 **`keep_full=5` 够不够跑完一条 hard 实例而不撞上下文上限** —— C8 的停手判据就是这一条，
   没撞上限之前不许做更精细的压缩
-- 🔴 **40 步够不够** —— mini 用了 11 和 20 步，但那是它的工具粒度；六个有类型的工具可能更费步数
-- `returned_models` 到底回什么
+- 🟡 **40 步够不够** —— 09-16 S3′ 实测 2 条（`deepseek-flash`）：`sphinx-9698` 用 18 次 API 调用就
+  `finished` 并交出 1191 字符的 patch；`django-13512` **40 次用满仍是空 patch**
+  （`stop_reason=max_steps`，`tool_errors` 只有 2 → 不是工具坏了，是探索没收敛）。
+  1/2 撞上限，**样本太小，还不能定要改成多少**，等 S4 的 10 条再看。
+  ⚠️ `steps` 与 `api_calls` 不是一回事：那条 53 步里只有 40 次 API 调用，**`max_steps` 限的是后者**。
+- ✅ **`returned_models` 到底回什么** —— 09-16 实测 `["deepseek-flash"]`，与请求的名字对得上，C15 生效
 
-## 六、⚠️ 09-16 的阻塞：挂着学校 VPN 时模型 API 连不上
+## 六、⚠️ 09-16 的阻塞（一）：挂着学校 VPN 时模型 API 连不上 —— **已解除**
 
 **结论：跑评测前先断开 Monash VPN。** 原因是本人当场确认的，不是推断。
+
+> 09-16 晚些时候复测：DNS、TLS、`/v1/models` 全部正常，裸 chat 请求 2 秒返回 200 ——
+> **这一层确实解除了**。但它挡住的后面还有第二层，见 §七。本节的排查次序仍然有效，
+> 症状不同（那次是 DNS 超时 + TLS RST，§七 是 HTTP 层 503 与静默挂起），别混。
 
 排查过程留档（同类症状下次照这个次序查）：
 
@@ -115,3 +123,140 @@ cd ~/swe-bench-eval
 set -a; source ~/.config/mini-swe-agent/.env; set +a
 PYTHONPATH=. .venv/bin/python -m agent.run --run-id s3-smoke --limit 2 --workers 2
 ```
+
+## 七、🔴 09-16 的阻塞（二）：中转站是「已经装好 Codex 的 agent」，两个端点都不透传 tools
+
+**三条结论**：
+
+1. **只要请求体里出现 `tools` 字段，请求就静默挂起** —— 不返回也不报错，吃满超时。
+   `chat/completions` 与 `responses` **两个端点都一样**，所以「换端点」不是退路。
+2. **它转发的不是裸模型**，是一个预置了完整 Codex system prompt（约 4.4k token）的 agent。
+   ——【原文】`responses` 响应体的 `instructions` 字段直接写着，见下。
+3. **站点可用性约 89%**，有分钟级低谷，但 `model.py` 的退避重试吃得掉 —— **这一条不是阻塞**。
+
+第 1 条**与 scaffold 无关**，也与 §六 的 VPN 无关（这一轮全程没挂 VPN，DNS 与 TLS 正常）。
+
+**一条旁证**：S2 的 mini-SWE-agent baseline 在同一个中转站上跑通过 2 条【原文 执行计划 §五】——
+而 mini 用的是**文本协议**（它只有一个 bash 工具），不是 function calling。
+站点能用，透不过去的就是 `tools`。
+
+### 怎么测出来的（可复现）
+
+探针留在 WSL 家目录（不入库）：`~/probe_raw.sh`（四组二分）· `~/probe_c1.sh`（健康对照）·
+`~/probe_c1b.sh`（同消息对照 + `tool_choice:none` + responses 端点）· `~/probe_uptime.sh`（可用性采样）。
+凭据映射在 `~/env.sh`：Monash 侧 `.env` 用 `API_KEY`/`BASE_URL`，litellm 认的是
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`，且 `BASE_URL` 不带 `/v1`，要补。
+
+判定的关键是**每次带 tools 的请求前后都夹一条裸请求**，否则会把站点抖动误读成 tools 的问题。
+
+决定性的一轮【原文 `~/probe_c1b.sh` 输出，09-16】—— messages 完全相同，唯一变量是 `tools`：
+
+| # | 请求 | 结果 |
+| --- | --- | --- |
+| 0 | 健康探测（裸） | 200 |
+| A | 同一条消息，**无** tools | **200**，2.9s |
+| B | 同一条消息，**加** tools（`tool_choice:"auto"`） | **000，挂满 90s** |
+| C | 同一条消息，无 tools（站点还活着吗） | **200**，1.9s |
+| D | 同一条消息，加 tools 但 **`tool_choice:"none"`** | **000，挂满 90s** |
+
+**D 是决定性的**：`none` 意味着模型不许调工具，所以挂死的不是「模型调用工具」这个动作，
+而是**转换层看到 `tools` 字段本身**。A/C 前后夹住，证明那 90 秒里站点是健康的。
+
+同样的模式在 `gpt-5.6-luna` 和 `gpt-5.6-terra` 上都复现过，流式（`stream:true`）一样挂。
+
+`responses` 端点复现得更干净【原文 `~/probe_resp2.sh` 输出，5 轮】—— 每轮事前健康检查都是 200：
+
+| 轮 | 健康(事前) | responses + tools | 健康(事后) |
+| ---: | --- | --- | --- |
+| 1 | 200 | **000，挂满 60s** | 000 |
+| 2 | 200 | **000** | 502 |
+| 3 | 200 | **000** | 502 |
+| 4 | 200 | **000** | 503 |
+| 5 | 200 | **000** | 502 |
+
+5/5 复现。与 `chat/completions` 不同的是，这里事后健康检查也多半跟着挂
+——【判断】responses 的挂起请求会占住上游连接，`chat/completions` 那边不会。没有进一步验证。
+
+### 为什么这是最难缠的失败方式
+
+`model.py` 的 `_RETRYABLE` 含 `Timeout`，而 `REQUEST_TIMEOUT=180`、`MAX_ATTEMPTS=4`。
+【推算】一条挂起的请求要走完 180×4 + 退避（2+4+8+抖动）≈ **12 分钟**才判死，不是立刻报错。
+25 条 / 4 workers ≈ 7 批 → **约 84 分钟跑完，0 resolved**。
+这正是交接单那句「别等跑完 10 条才发现」要防的情况。
+
+### 顺带测到的两件事
+
+- **中转站每次请求注入约 4.4k token 的前缀**：`"Say OK."`（约 3 token）报
+  `prompt_tokens=4389`、`cached_tokens=3802`【原文 响应体 usage，多次一致】。
+
+  **那段前缀是什么，`responses` 端点直接给了答案** —— 响应体的 `instructions` 字段【原文】：
+
+  > `You are Codex, a coding agent based on GPT-5. You and the user share one workspace, and your`
+  > `job is to collaborate with them until their goal is genuinely handled.\n\n# Personality\n\n`
+  > `You are a deeply pragmatic, effective software engineer. ...`
+
+  所以这个分组转发的**不是裸模型，是一个已经装好 Codex 的 agent**（模型列表里那个
+  `codex-auto-review` 也是佐证）。两件事因此成立：① `tools` 透不过去讲得通；
+  ② **它和 C16 直接冲突** —— 我们的 system prompt 写死「There is no shell」，
+  而 Codex 那段假定自己有 shell、和用户共享 workspace。
+  Responses API 的 `instructions` 参数本可覆盖它，09-16 测这一条时撞上 503，**没验成**。
+  执行计划 §五 的成本估算也要按这 4.4k 前缀重算。
+- **`returned_model` 对得上**：请求 `gpt-5.6-luna`，响应 `"model":"gpt-5.6-luna"`【原文 响应体】。
+  这是 C15 那个悬置项（「中转站是否偷换模型」）的第一条正面证据，但只在裸请求下验过。
+
+### 退路（还没选）
+
+| 选项 | 代价 | 备注 |
+| --- | --- | --- |
+| **换支持 function calling 的供应商** | 改 `.env` 两行 | ✅ **09-16 选了这条，当天验通**（见下）。C1、C10 与整条 trajectory 结构一行没改 |
+| 退回文本协议 | 一天 | C1 早写明的退路。要新写解析器 + 处理两类新失败，且「我写了个解析器」在面试里不值钱。**没用上** |
+| ~~走 `/v1/responses` 端点~~ | —— | ❌ **已否**：5 轮全部挂起，两个端点一样不透传 tools |
+| ~~换中转站的其他分组~~ | —— | ❌ **已否**（本人 09-16）：只有 0.1x / 0.15 两个池子，都是 Codex 的；没有纯 chat 分组 |
+
+**换供应商的绝对成本很小**：执行计划 §五 实测单条约 $0.03、25 条约 $0.85，原话是
+「成本不再是这个项目的约束」。倍率贵 10 倍在这个用量下也只是几美元。
+
+### 09-16 的解法：换 DeepSeek，C1 当天验通
+
+本人 09-16 在 `.env` 里换成 DeepSeek 官方端点（`https://api.deepseek.com`）。**同一组探针，结果反过来**：
+
+| 探针 | 中转站 | DeepSeek |
+| --- | --- | --- |
+| 裸请求 | 200 | 200 |
+| `"Say OK."` 的 `prompt_tokens` | **4389**（注入 Codex prompt） | **33**（干净） |
+| `chat/completions` + tools | **挂起** | **200**，`prompt_tokens` 288（工具 schema 正常进 prompt） |
+
+再用**真实路径**（`LiteLLMClient` + `build_tool_schemas()` 的 7 个工具）验一次【原文 `~/probe_fc.py` 输出】：
+
+```
+returned_model='deepseek-flash'
+tool_calls=1
+  - name='read_file' args={'path': 'setup.py'} error=None
+C1_VERDICT=SUPPORTED
+```
+
+**C1 原样成立**，`loop.py` / `tools.py` 一行没改。
+
+三条随之而来的事实：
+
+- **DeepSeek 现在的模型是 `deepseek-flash` 和 `deepseek-v4-pro`**【原文 `/v1/models`，09-16】，
+  不是文档里常见的 `deepseek-chat` / `deepseek-reasoner`。**用前先打一次 models 接口**
+  （执行计划 §五 那个「先用免费的 models 接口确认模型真的存在」的动作，这次又救了一回）。
+- 🔴 **`cost_limit` 这层保护失效了**：litellm 1.100.0 的价格表不认识 `deepseek-flash`，
+  `completion_cost()` 抛异常 → `_to_reply` 按设计降级记 0【原文 `~/probe_fc.py` 输出 `cost=$0.000000`】。
+  执行计划 §五 写的「litellm 认识全部 6 个模型，所以保护是真的有」**对中转站成立，对 DeepSeek 不成立**。
+  止损现在只剩 `--max-steps` 和 `--wall-clock-limit`。
+- ⚠️ **`.env` 在 Windows 侧编辑，是 CRLF**。不剥 `\r` 会混进 key（实测 `KEYLEN` 比真实长度多 1），
+  curl 恰好容忍，litellm 未必。`~/env.sh` 已改成 source 一份 `sed 's/\r$//'` 过的副本。
+
+### 已纠正的错误
+
+第一轮测 `gpt-5.6-terra` 时，带 tools 的请求挂了 90s，随后的裸请求也 503，
+我据此判成「站点抖动，不能归因给 tools」。**这个判断是错的** —— 加了前后夹健康对照才发现
+tools 挂起并不影响后续请求（上表 C、D 之后的裸请求都 200），那次 503 是独立抖动撞在一起。
+教训：**判断一个参数有没有问题，必须在同一分钟内做带/不带的对照**，不能靠前后两次请求的时间顺序推。
+
+**第二处**：据「一分钟内从连续 200 掉到连续 8 次 503」我写过「站点可用性撑不住批量跑」。
+随后 19 轮采样【原文 `~/probe_uptime.sh` 输出】只挂 2 次（成功率 ~89%，`#12–#21` 连续 10 轮全通），
+**那次连续失败是低谷，不是常态**。`model.py` 的 4 次退避重试吃得掉这种抖动。
+教训：**说「不稳定」之前先采够样本**，一段连续失败不构成可用性结论。
