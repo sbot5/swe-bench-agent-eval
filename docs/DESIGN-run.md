@@ -72,6 +72,81 @@ harness 吃不吃得进去 —— 任何一环有 bug 都到不了 25/25。**接
 - `django-13512` 40 次调用用满仍是空 patch，而 `tool_errors` 只有 2 ——
   是探索没收敛，不是工具坏了。步数够不够等 S4 的 10 条再定（`DESIGN-loop.md` §五）。
 
+### S4：10 条真跑（2026-09-17）
+
+```bash
+python -m agent.run --run-id s4-mine --limit 10 --workers 4 --model openai/deepseek-flash
+swebench eval verified -p results/inference/s4-mine/preds.json --run-id s4-mine -j 4
+```
+
+**验收是 `resolved > 0`。结果 8/10 —— 大幅超过。**
+
+| 事实 | 值 |
+| --- | --- |
+| resolved / unresolved | **8 / 2** |
+| infra failure · ambiguous · empty patch · error | **0 · 0 · 0 · 0** |
+| 产出 patch 的条数 | **10/10**（463–1589 字符） |
+| 推理耗时 | **194.5 秒**（4 并发） |
+| 评测耗时 | 58 秒，10 ran successfully / 0 failed |
+| **真实成本** | **¥2.24**（DeepSeek 余额 12.16 → 9.92），**≈ ¥0.224/条** |
+
+🔑 **¥2.24 是这个项目第一个真实成本数字。** 程序里打印的 `cost=$0.0000` 仍然是假的（§三 S3′ 那条仍然有效），
+唯一可信的口径是**跑前跑后查供应商余额的差**。外推 25 条 ≈ ¥5.6。
+**报告和简历里写成本，只能写这个余额差算出来的数，并写明它是怎么来的。**
+
+**逐条**（`steps` = tool_call 数，`calls` = 模型轮数，见下面的口径说明）：
+
+| 实例 | 判定 | stop_reason | steps | calls | patch |
+| --- | --- | --- | ---: | ---: | ---: |
+| `django__django-11163` | ✅ | finished | 8 | 9 | 570 |
+| `django__django-12039` | ✅ | finished | 11 | 8 | 1526 |
+| `django__django-12262` | ✅ | finished | 12 | 10 | 716 |
+| `django__django-15863` | ✅ | finished | 9 | 9 | 463 |
+| `pydata__xarray-4356` | ✅ | **max_steps** | 49 | 40 | 1120 |
+| `sphinx-doc__sphinx-7889` | ✅ | finished | 28 | 23 | 1113 |
+| `sphinx-doc__sphinx-9698` | ✅ | finished | 14 | 13 | 624 |
+| `sphinx-doc__sphinx-9711` | ✅ | finished | 28 | 28 | 1589 |
+| `astropy__astropy-7166` | ❌ | finished | 16 | 16 | 862 |
+| `django__django-13512` | ❌ | finished | 9 | 7 | 534 |
+
+**和 S3′ 的对照**：`django-13512` 在 S3′ 是 40 次调用用满、**空 patch**；S4 同一条 7 次调用就产出了
+534 字符的 patch 并过了 1/3 的 FAIL_TO_PASS。两次之间 `agent/` 一行没改 —— **同一模型同一实例的方差就有这么大**，
+报告里不能拿单次跑的单条结果说事。
+
+⚠️ **`steps` 的命名歧义（09-17 发现，会被面试追问碎）**：`--max-steps 40` 限的是
+`loop.py:408` `for index in range(1, max_steps+1)` 的**模型轮数**，而打印/落盘的 `steps` 是
+`len(result.steps)`，在 `loop.py:476` 的**内层 for 里每个 `tool_call` append 一条**。
+模型一轮可以并行调多个工具，所以 `pydata__xarray-4356` 出现 `stop_reason=max_steps` 而 `steps=49 > 40`，
+**不矛盾**。口径：`steps` = 工具调用数，`api_calls` = 模型轮数。
+（`django-11163` 反过来 steps=8 < calls=9，是因为有一轮模型没调工具，走了 C7 的「提醒一次」。）
+
+#### 两条 unresolved 的归因
+
+两条都是 `patch_successfully_applied: true`、`infra_failure: false` —— **环境干净，纯 Agent 能力问题**。
+这正是 §二「先评测后 Agent」那条顺序买来的东西：这句话现在可以直接说，不用再排查。
+
+**① `astropy__astropy-7166`：FAIL_TO_PASS 0/1，而且是 scaffold 喂了假信号。**
+模型三次 `run_tests` 都收到 `All 1 test(s) passed (1 error:)` / `status=ok`，于是判定改完了直接 `finish`，
+实际上**一个测试都没跑起来**。两个缺陷叠加（pytest 3.3.1 的 `-o` 吞掉目标路径 + 带冒号的 `ERROR:`
+躲过失败判定），完整实测与修法写在 `DESIGN-tools.md` §五「`run_tests` 在 S4 真跑里暴露的两个错」。
+**影响面**：§三那张表里 `pytest -rA -vv -o console_output_style=classic` 这个前缀有 **3 条**实例，
+S4 只抽中 1 条。**S5 跑 25 条之前必须先修**，否则老 pytest 的实例全部拿不到有效测试反馈。
+
+**② `django__django-13512`：FAIL_TO_PASS 1/3，改动范围不足。**
+模型只改了 `django/forms/fields.py` 的 `prepare_value`（加 `ensure_ascii=False`），过了
+`test_prepare_value`；挂掉的两条 `test_json_display_for_field`、`test_label_for_field` 都在
+`admin_utils.tests.UtilsTests`，需要同时改 `django/contrib/admin/utils.py`。
+模型自己挑的测试（12 条 + 78 条）**全过**，给了它「改完了」的错误信心。
+→ 这是「**自选测试 ≠ 评分测试**」的典型失败，和 R2「运行器前缀必须剔掉评分目标」是一枚硬币的两面：
+正因为不许它看评分目标，它的「全过」就永远只是它自己那一小片的全过。
+**这条不算 bug，是 scaffold 的固有代价**，报告里应该当作 baseline 对比的观察点，而不是去修。
+
+#### 一个要修的路径错
+
+harness 的产物落在**仓库根的 `logs/evaluation/`**（`gold-replay-s25`、`s4-mine`），
+而 S0–S2 那批在 `SWE-bench/logs/evaluation/`。`collect.sh` 的 `SRC=SWE-bench/logs` 已经对不上，
+**新结果收不进 `results/`**。09-17 的 `s4-mine` 是手工确认过的，`collect.sh` 待改。
+
 ## 四、跑哪个集 —— 还没花的那颗子弹
 
 | 集合 | 条数 | 用途 |

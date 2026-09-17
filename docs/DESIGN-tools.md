@@ -418,6 +418,58 @@ git 默认 `-U3` 的三行上下文，在真实修复上足够唯一 —— 这�
 6. **循环要测「转 0 次 / 1 次 / 2 次以上 / 转到下限还不满足」四种**（list_files bug 6–9）。只测「转 1 次就满足」，
    死循环和降到 0 都藏得住；循环变量要同时出现在条件、递减、调用三处 —— 三处名字不一致就是信号
 
+### `run_tests` 在 S4 真跑里暴露的两个错（2026-09-17，**尚未修**）
+
+S4 十条真跑（见 `DESIGN-run.md` §三）里 `astropy__astropy-7166` unresolved。读 trajectory 发现
+模型连续三次 `run_tests` 都收到 **`All 1 test(s) passed (1 error:)`**、`status=ok`、
+`failure_category` 为空，于是判定改完了直接 `finish`。实际上**一个测试都没跑起来**。两个缺陷叠加：
+
+**错 1 —— `-o` 在老 pytest 上吞掉了目标路径。**
+模型看到的观察原文里，`content` 第一行就是：
+
+```
+ERROR: -o/--override-ini expects option=value style.
+```
+
+发出的命令是 `pytest -rA -vv -o console_output_style=classic astropy/utils/tests/test_misc.py::test_inherit_docstrings`。
+
+**容器内实测**（`docker run --rm swebench/sweb.eval.x86_64.astropy_1776_astropy-7166:latest`，09-17）：
+
+| 试的命令 | 结果 |
+| --- | --- |
+| `pytest --version` | **pytest 3.3.1**（Python 3.6，2017 年） |
+| 原样命令（`-o k=v` 后面跟 target） | `ERROR: -o/--override-ini expects option=value style.` |
+| **去掉 `-o` 跑同一条测试** | **`1 passed, 1 warnings in 0.03 seconds`** |
+
+→ 根因：pytest 3.3.1 的 `-o` 是 `nargs="*"` 贪婪吞参，把后面的测试路径也当成 ini 覆盖项；
+路径里没有 `=` 就报错退出。**不是命令拼错，是版本行为。**
+本工具「从 `eval_script` 抽运行器前缀、把 target 拼在命令末尾」的做法（`DESIGN-run.md` R2 的同一处设计）
+在 **pytest < 3.4 的实例上必然翻车**。S4 的 10 条里只有 astropy 这条是老 pytest，所以只翻了一条。
+
+**错 2 —— 带冒号的 `ERROR:` 躲过了失败判定，失败被算成通过。**
+SWE-bench 官方的 astropy log parser 把上面那行 `ERROR: -o/--override-ini expects option=value style.`
+**当成一条测试记录**解析：按空格切，第一个 token `ERROR:`（**带冒号**）当状态，剩下当测试名。
+于是 `status_map` 里多了一条状态为 `"ERROR:"` 的「测试」。而 `tools.py:1134`：
+
+```python
+_FAILING_STATUSES: Final[frozenset[str]] = frozenset({"FAILED", "ERROR"})
+```
+
+`"ERROR:"` ≠ `"ERROR"` → `tools.py:1278` 的 `failed` 为空 → 落进 `tools.py:1299` 的 else 分支，
+报 `All 1 test(s) passed (1 error:)` 并且 `Observation.ok`。
+`tally` 里那个刺眼的 `1 error:`（**冒号**）就是唯一的线索。
+
+`tools.py:1262` 的 `if not status_map` 那条防线（T7「一条结果都没有就报 error」）**没接住** ——
+因为 parser 恰好产出了一条记录，`status_map` 非空。
+
+→ **教训**：把第三方 parser 的输出当可信输入。`status_map` 里的 key 未必是测试、value 未必是已知状态。
+正确的做法是**白名单**（只认识的状态才算通过）而不是黑名单（不在失败集合里就算通过）。
+对照 `django__django-13512` 同一次跑的 `All 12 test(s) passed (12 passed)` —— 格式正常，
+说明这个误判**只在 pytest 自身报错退出时触发**，平时看不见。
+
+**修法（待本人定，未动手）**：① 失败判定改白名单；② `exit_code != 0` 时无论 parser 说什么都不报 ok；
+③ target 不再无条件拼在末尾。三条互相独立，②最便宜且能单独堵死本次这种假信号。
+
 ## 六、实测数据（2026-09-14/15，WSL `.venv` Python 3.12.3；上半 shell 在 WSL 宿主机，下半进 astropy-12907 容器）
 
 | 事实 | 值 | 用在哪 |
