@@ -17,6 +17,7 @@
 """
 
 import collections
+import glob
 import json
 import os
 import sys
@@ -58,18 +59,19 @@ def analyze(path):
         "cum_in": cum_in,
         "out": out,
         "logged_cost": d.get("total_cost", stats.get("instance_cost")),
-        "patch_len": len(d.get("model_patch") or ""),
+        # 我方轨迹的键是 model_patch，mini 存在 info.submission —— 两边都要读，
+        # 否则 mini 那边全算成 0（2026-09-17 第一版就犯了这个错，和 T10 是同一种「键名口径」bug）
+        "patch_len": len(d.get("model_patch") or info.get("submission") or ""),
         "model": cfg.get("model", {}).get("model_name") if isinstance(cfg.get("model"), dict) else cfg.get("model"),
     }
 
 
 def scan(subdir):
+    """递归找 *.traj.json —— S2 的产物是扁平的，mini 2.4.6 写 <run>/<instance_id>/<instance_id>.traj.json。"""
     d = os.path.join(REPO, "results/inference", subdir)
-    rows = []
-    for fn in sorted(os.listdir(d)):
-        if fn.endswith(".traj.json"):
-            rows.append(analyze(os.path.join(d, fn)))
-    return rows
+    if not os.path.isdir(d):
+        return []
+    return [analyze(p) for p in sorted(glob.glob(os.path.join(d, "**", "*.traj.json"), recursive=True))]
 
 
 def table(title, rows):
@@ -154,6 +156,26 @@ def main():
     usd_in = S5_YUAN / FX - out_tok / 1e6 * P_OUT
     avg = usd_in / (in_tok / 1e6)
     hit = (P_MISS - avg) / (P_MISS - P_HIT)
+    # ---- 跑后核算：同一把尺量「估得准不准」（s5-baseline 落盘后才有输出）----
+    base = scan("s5-baseline")
+    if base:
+        b_tot = table("mini S5-baseline 实测（本次跑，step_limit=40）", base)
+        act = b_tot["cum_in"] + b_tot["out"]
+        est_a = s5_chars * (sum(r["cum_in"] + r["out"] for r in mini)
+                            / sum(r["cum_in"] + r["out"] for r in mine_pair))
+        print("=" * 78)
+        print("[跑后核算] 字符量 估 {:,.0f} vs 实测 {:,.0f} -> 估/实 = {:.2f}".format(est_a, act, est_a / act))
+        print("           按锚点折成钱 估 ¥{:.2f} vs 实测字符对应 ¥{:.2f}".format(
+            est_a / 1e6 * unit, act / 1e6 * unit))
+        print("           实际步数分布:", dict(collections.Counter(
+            r["api_calls"] if r["api_calls"] is not None else r["assistant_msgs"] for r in base)))
+        print("           跑满 40 步的条数:", sum(1 for r in base if r["assistant_msgs"] >= 40))
+        print("           出 patch 的条数:", sum(1 for r in base if r["patch_len"] > 0), "/", len(base))
+        if len(sys.argv) >= 3:
+            spent = float(sys.argv[1]) - float(sys.argv[2])
+            print("           余额差（跑前 {} - 跑后 {}）= ¥{:.2f}；估 ¥{:.2f} -> 估/实 = {:.2f}".format(
+                sys.argv[1], sys.argv[2], spent, est_a / 1e6 * unit, est_a / 1e6 * unit / spent))
+
     print("\n[交叉验算] 若 {:.1f} 字符/token：S5 输入 {:,.0f} tok、输出 {:,.0f} tok".format(
         CHARS_PER_TOKEN, in_tok, out_tok))
     print("    全价不命中缓存本该 ¥{:.2f}，实际余额差 ¥{:.2f} -> 隐含缓存命中率 {:.0%}".format(
