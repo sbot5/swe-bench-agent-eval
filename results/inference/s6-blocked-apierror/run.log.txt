@@ -1,0 +1,45 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+run-id=s6-maxsteps80 model=openai/gpt-5.6-luna instances=2 workers=2
+[WARNING] InternalServerError on attempt 1/4; retrying in 2.0s
+[WARNING] InternalServerError on attempt 1/4; retrying in 2.2s
+[WARNING] InternalServerError on attempt 2/4; retrying in 4.9s
+[WARNING] InternalServerError on attempt 2/4; retrying in 4.0s
+[WARNING] InternalServerError on attempt 3/4; retrying in 8.7s
+[WARNING] InternalServerError on attempt 3/4; retrying in 8.0s
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+[1/2] django__django-10554 api_error steps=0 cost=$0.0000 patch=0ch 155.1s
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+[2/2] sympy__sympy-17630 api_error steps=0 cost=$0.0000 patch=0ch 175.0s
+
+done: 2 instances, 0 produced a patch, $0.0000, 175.0s
+preds: /home/zixu/swe-bench-eval/results/inference/s6-maxsteps80/preds.json

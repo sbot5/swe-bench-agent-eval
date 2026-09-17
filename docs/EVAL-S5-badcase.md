@@ -193,6 +193,75 @@ issue 长既可能直接拖垮模型（信息太多、不收敛），也可能�
 成本约 ¥0.42 + 更长轨迹的溢价，**跑之前先估**（S5 单价 ¥0.211/条是 40 轮的均价，
 80 轮不是线性外推，`prompt_tokens` 随轮数累积增长）。
 
+### 4.1 第一次尝试（09-17）：infra 失败，没花钱，结论一条都不算数
+
+跑了，但**两条都是 `stop_reason=api_error`、`api_calls=0`、`steps=0`**
+【原文 `results/inference/s6-blocked-apierror/`，含 `run.log.txt`】。
+轨迹里那句「首次 apply_patch = 从未」**不是实验结果** —— 模型一次都没被调到。
+token = 0，**余额没动**（¥4.65 未变）。
+
+命令与 S5 同一条，只加了 `--instances` / `--max-steps` 和新 run-id，`agent/` 一行没改：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m agent.run --run-id s6-maxsteps80 \
+  --instances ~/s6_ids.txt --max-steps 80 --workers 2
+```
+
+**根因定位**（09-17 实测，每条都可复现）：
+
+| 探针 | 结果 | 说明 |
+| --- | --- | --- |
+| 轨迹 `error` 字段 | `InternalServerError after 4 attempts: … OpenAIException - Connection error.` | litellm 把**连接失败**也归进 `InternalServerError`，看着像中转站 500，其实是连不上 |
+| WSL `getent hosts hgapi.dieqiyun.top` | FAIL | 而 `github.com` / `api.deepseek.com` 都 OK → 不是 WSL 的 DNS 坏了 |
+| Windows `Resolve-DnsName` | **NXDOMAIN**「DNS 名称不存在」 | 活动网卡 DNS 是 Monash 的 `130.194.1.99 / 130.194.7.99` |
+| 1.1.1.1 / 8.8.8.8 直查 | **全部超时** | 这个网络拦出站 53 端口，此路测不出结论 |
+| Cloudflare DoH（走 443） | `NOERROR → 38.34.175.121` | **域名真实存在**，所以校内那个 NXDOMAIN 是屏蔽，不是域名失效 |
+| `curl --resolve` 直连该 IP | `connect=0.155s` 成功，随后 TLS 阶段 **`Connection reset by peer`** | 按 SNI 拦截 → **加 hosts 条目也没用** |
+| 对照 `api.deepseek.com` / `api.openai.com` / `github.com` | TLS 全走完（401 / 401 / 200） | HTTPS 整体正常，**拦的只有这一个域名** |
+
+**结论**：Monash 网络对 `hgapi.dieqiyun.top` 做了 **DNS + SNI 两层屏蔽**。
+`d7780a2` 那条「阻塞原因确认为学校 VPN」至此有了确切机制。**本机改配置解决不了**；
+换网络（热点 / 家里 / Tailscale exit node）后把上面那条命令原样重跑即可。
+
+⚠️ **不要改成 DeepSeek 官方端点来绕**：S5 请求的模型名是 `openai/gpt-5.6-luna`，
+由中转站映射成 `deepseek-flash` 返回【原文 S5 traj 的 `returned_model`】。
+官方端点必须显式要 `deepseek-flash`，两者行为是否一致【未知】——
+换了就与 S5 不可比，而可比性正是这个实验的全部意义。
+
+### 4.2 花费重估：不是 ¥0.42，是 ¥1.77【推算】
+
+上面写的「约 ¥0.42」是拿 ¥0.211/条均价线性推的，**估低了 4 倍**。
+按这两条 S5 轨迹的逐轮 token 实测重估（去重口径同 `scripts/s6_firstpatch.py`）：
+
+| | `django-10554` | `sympy-17630` |
+| --- | --- | --- |
+| 40 轮实际 token【原文 traj】 | 638,075 + 17,251 | 616,162 + 13,032 |
+| 末 20 轮 prompt 斜率 | 258 tok/轮 | 86 tok/轮 |
+| 第 80 轮 prompt 预估【推算】 | ~34,100 | ~24,500 |
+| 80 轮总 token【推算】 | ~1.84M（2.8×） | ~1.56M（2.5×） |
+| **80 轮花费【推算】** | **¥0.96** | **¥0.81** |
+
+- 为什么原估偏低：**均价被早停的条拉低了**。这两条本来就跑满 40 轮，实际各 ¥0.34 / ¥0.33，不是 ¥0.211。
+- 单价 **¥0.5226/1M token**【推算】= S5 余额差 ¥5.27 ÷ 全 25 条实测 10,084,204 token，
+  **不是中转站标价**（标价未核）。前提：80 轮的 cache 命中模式与 40 轮相同。
+- 三个怕的都不成立：① `keep_full_observations=5` 的 C8 裁剪已在压增长（早期 ~550 tok/轮 → 末段 86–258），
+  所以不是线性翻倍；② 第 80 轮 prompt 峰值 ~34k **低于 S5 已实测的 42,607**，不会撞 `CONTEXT_OVERFLOW`；
+  ③ `wall_clock_limit` 默认 1800s，这两条 40 轮只用 90–105s，80 轮约 210s，够。
+
+### 4.3 判据锁在脚本里，别在跑完之后换尺
+
+`scripts/s6_firstpatch.py` —— 首次 `apply_patch` 的定义与 `s5_badcase2.py` 的判别量 A **逐字相同**
+（`steps` 里第一条 `tool_name == "apply_patch"` 的 `index`）。
+
+**`index` 是模型轮号**，一轮发多个工具调用时会重复（实测 `django-10554` 的 44 条 step 落在
+40 个 index 上、`max=40` = `max_steps`），所以它与「落在 41–80 之间」是同一把尺；
+`len(steps)` 是工具调用数，不是轮数（口径同交接单里 `xarray-4356` 那条）。
+
+⚠️ **n=2 的「仍然从未」是弱证据**：观察⑦⑨已坐实同模型同实例方差极大。
+这个实验的两个方向**不对称** —— 落在 41–80 能**推翻**§〇 的结论（强证据）；
+全是「从未」只能**不反对**结论（弱证据）。
+汇报口径不得写成「已证明轮数不是瓶颈」。
+
 ## 五 面试可讲的点
 
 1. **「二选一的问题问错了」**：我最初把失败归因设成「轮数不够 vs 原地打转」，
