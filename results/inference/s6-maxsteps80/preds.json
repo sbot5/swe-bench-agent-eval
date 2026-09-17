@@ -1,0 +1,12 @@
+{
+  "sympy__sympy-17630": {
+    "instance_id": "sympy__sympy-17630",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sympy/matrices/expressions/tests/test_blockmatrix.py b/sympy/matrices/expressions/tests/test_blockmatrix.py\nindex 1e1033affc..de810eb8b3 100755\n--- a/sympy/matrices/expressions/tests/test_blockmatrix.py\n+++ b/sympy/matrices/expressions/tests/test_blockmatrix.py\n@@ -22,6 +22,13 @@\n \n def test_bc_matmul():\n     assert bc_matmul(H*b1*b2*G) == BlockMatrix([[(H*G*G + H*H*H)*G]])\n+    from sympy import ZeroMatrix\n+    a = MatrixSymbol(\"a\", 2, 2)\n+    z = ZeroMatrix(2, 2)\n+    b = BlockMatrix([[a, z], [z, z]])\n+    prod = b.blocks*b.blocks\n+    assert False, (repr(prod[0, 1]), type(prod[0, 1]),\n+                   repr(a*z), repr(z*z), repr(a*z + z*z))\n \n def test_bc_matadd():\n     assert bc_matadd(BlockMatrix([[G, H]]) + BlockMatrix([[H, H]])) == \\\n"
+  },
+  "django__django-10554": {
+    "instance_id": "django__django-10554",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}

@@ -220,13 +220,32 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s6-maxsteps80 \
 | 对照 `api.deepseek.com` / `api.openai.com` / `github.com` | TLS 全走完（401 / 401 / 200） | HTTPS 整体正常，**拦的只有这一个域名** |
 
 **结论**：Monash 网络对 `hgapi.dieqiyun.top` 做了 **DNS + SNI 两层屏蔽**。
-`d7780a2` 那条「阻塞原因确认为学校 VPN」至此有了确切机制。**本机改配置解决不了**；
-换网络（热点 / 家里 / Tailscale exit node）后把上面那条命令原样重跑即可。
+`d7780a2` 那条「阻塞原因确认为学校 VPN」至此有了确切机制。这七条探针本身都成立，
+**但它不是这次实验失败的原因** —— 见下面这条。
 
-⚠️ **不要改成 DeepSeek 官方端点来绕**：S5 请求的模型名是 `openai/gpt-5.6-luna`，
-由中转站映射成 `deepseek-flash` 返回【原文 S5 traj 的 `returned_model`】。
-官方端点必须显式要 `deepseek-flash`，两者行为是否一致【未知】——
-换了就与 S5 不可比，而可比性正是这个实验的全部意义。
+⚠️ **已纠正的错误 ②（09-17，不静默改掉）**
+
+原文这里写的是：「**不要改成 DeepSeek 官方端点来绕**：S5 请求的模型名是 `openai/gpt-5.6-luna`，
+由中转站映射成 `deepseek-flash` 返回【原文 S5 traj 的 `returned_model`】。官方端点必须显式要
+`deepseek-flash`，两者行为是否一致【未知】—— 换了就与 S5 不可比。」
+
+**前半句是错的，三条原文级证据**：
+
+1. 【原文 `~/s5_run.sh`】里写死 `--model openai/deepseek-flash`；【原文 `~/s5_run.log:2`】打印
+   `run-id=s5-mine model=openai/deepseek-flash`。
+2. 【原文 `~/s5_balance.sh`】查的是 `https://api.deepseek.com/user/balance` ——
+   S5 那 ¥5.27 的余额差**就是这个官方账户的**。
+3. 【原文 `Career/07-swe-bench-agent/.env`，mtime 2026-09-16 21:18】中转站两行**已注释**，
+   生效的是 `BASE_URL=https://api.deepseek.com`；`~/env.sh` source 的正是这个文件。
+
+【原文 `results/inference/s5-mine/`】全部产物里**搜不到** `gpt-5.6-luna`，`returned_model` 848 次
+**全是** `deepseek-flash`。**S5 本来就跑在官方端点上** —— 所谓「换了就与 S5 不可比」，
+担心的那件事早在 S5 开跑之前就已经发生了，而且不影响可比性。
+
+那么 §4.1 的 `api_error` 是怎么来的？**那条命令没带 `--model`**，于是落回
+`agent/model.py:16` 的 `DEFAULT_MODEL = "openai/gpt-5.6-luna"`（中转站时代留下的名字），
+litellm 拿着它去打了被屏蔽的域名【原文 `~/s6.log:2`：`model=openai/gpt-5.6-luna`】。
+**换网络不是必要条件**；带上 `--model openai/deepseek-flash` 就够了，见 §4.4。
 
 ### 4.2 花费重估：不是 ¥0.42，是 ¥1.77【推算】
 
@@ -262,6 +281,56 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s6-maxsteps80 \
 全是「从未」只能**不反对**结论（弱证据）。
 汇报口径不得写成「已证明轮数不是瓶颈」。
 
+### 4.4 第二次尝试（09-17）：跑通了，§〇 的结论被推翻一半
+
+命令与 `s5_run.sh` 逐字一致，只改 run-id / instances / max-steps / workers，并**显式给 `--model`**
+（落盘在 `~/s6_run.sh`）：
+
+```bash
+python -m agent.run --run-id s6-maxsteps80 --instances ~/s6_ids.txt --max-steps 80 --workers 2 --model openai/deepseek-flash
+```
+
+可比性前提，跑前逐条验过：`git diff --stat s5-frozen HEAD -- agent/` **为空**（`agent/` 一行没改）；
+`returned_model` 与 S5 同为 `deepseek-flash`；先花几毛跑了 1 实例 × 2 轮的冒烟
+（`s6-smoke`，`api_calls=2`、`error` 为空）确认链路，才跑正式的。
+
+**结果**【原文 `results/inference/s6-maxsteps80/`，判据脚本 `scripts/s6_firstpatch.py`】：
+
+| | `sympy-17630` | `django-10554` |
+| --- | --- | --- |
+| **首次 `apply_patch`** | **第 72 轮** | 从未（0 次） |
+| S5 同条 40 轮【原文 `s5-mine` traj】 | 从未 | 从未 |
+| `api_calls` | 80（用满） | 80（用满） |
+| 工具分布 | read_file 66 · search_code 13 · run_tests 3 · **apply_patch 2** · list_files 1 | read_file 66 · search_code 20 · list_files 1 |
+| S5 同条工具分布 | read_file 37 · search_code 6 · list_files 1 | read_file 27 · search_code 16 · list_files 1 |
+| patch | **766 字符** | 0 |
+| 评测 | **unresolved** | empty patch |
+| prompt / completion token | 1,741,415 / 25,801 | 1,618,242 / 28,044 |
+
+评测汇总【原文 `results/evaluation/s6-maxsteps80/results.json`】：resolved **0** / unresolved 1 /
+empty patch 1 / **0 infra · 0 ambiguous · 0 error**。
+
+**按 §4.3 预先锁定的判据读数**（尺没换）：
+
+- `sympy-17630` 的首次 `apply_patch` **落在 41–80 之间（72）** → 按预先写好的口径，
+  **§〇 的结论要改**：对这一条，40 轮确实不够，「轮数不是瓶颈」被**推翻**。
+- `django-10554` 仍是「从未」→ 对这一条，「不会收敛到动手」仍然成立。
+- **但「给够轮数就能解决」同样不成立**：它动了手也没修对。
+  轮数把失败模式从「零编辑」推成了「编辑了但不对」，**没换来 resolved**。
+
+⚠️ **n=2 且 1:1 分裂，不得过度概括。** 按 §4.3 的不对称口径，「推翻」那一半是强证据、成立；
+「仍然从未」那一半只能算不反对。对外只说：**「40 轮的预算至少对一部分实例确实不够，
+但补足预算只把失败从『不动手』变成『改错』」**，不许写成光秃秃的「轮数是/不是瓶颈」。
+
+**成本**【原文 余额差】：跑前 **¥4.35** → 跑完（含评测）**¥3.50**，**实测 ¥0.85**。
+
+- §4.2 按 S5 单价 ¥0.5226/1M 反推的 ¥1.77（脚本打印 ¥1.784）**高估了一倍**：
+  实测 3,413,502 token 花 ¥0.85 → **¥0.249/1M**【推算】。
+- 最可能的解释是长轨迹里 prompt cache 命中率更高、命中部分另计价【判断，**未查官方计价表，不作结论**】。
+- ⚠️ 余额基线对不上：§4.2 记的是 **¥4.65**，本次跑前实测 **¥4.35**。09-17 14:46（S5 跑完）之后
+  本仓库没有任何真模型跑过（`s6-blocked-apierror` 是 0 token）【原文 `results/inference/` 时间戳】，
+  这 ¥0.30 最可能是 S5 账单延迟结算【判断】，未计入 S6。**余额差这把尺有延迟，不是秒表。**
+
 ## 五 面试可讲的点
 
 1. **「二选一的问题问错了」**：我最初把失败归因设成「轮数不够 vs 原地打转」，
@@ -276,3 +345,12 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s6-maxsteps80 \
    issue 长度与难度分不开，标成相关性。**能用的证据和不能用的证据都留在文档里**。
 5. **零编辑 ≠ 编辑工具不行**：全 25 条工具错误率 2.7%、`anchor_ambiguous` 仅 1 次。
    S3 gold 回放「66 个 hunk 66/66 一次打上」在真模型下没被推翻 —— 失败发生在**决策层**，不是执行层。
+
+6. **证据链完整 ≠ 因果链正确**：09-17 第一次跑 S6 全是 `api_error`，我做了七条网络探针，
+   证明校内网对中转站做了 DNS + SNI 两层屏蔽，然后判「必须换网络」。探针没错、结论也没错，
+   **但归错了因** —— 真正的原因是那条命令漏了 `--model`，落回 `model.py` 里中转站时代的默认模型名，
+   而 S5 早就换到官方端点了。**先问「这次的配置和上次成功那次差在哪」，比做七条探针快得多。**
+7. **补足预算只换来另一种失败**：40 → 80 轮后 `sympy-17630` 从「零编辑」变成「第 72 轮动手、
+   766 字符 patch、仍 unresolved」。我把两个方向的读数**预先写死在 §4.3**，结果落在「推翻」那一侧就照改；
+   但也没顺势说成「轮数是瓶颈」—— 另一条 80 轮仍然从未动手，动了手的那条也没修对。
+   **预先锁判据的价值就在这种时候：它同时挡住了自我辩护和过度概括。**

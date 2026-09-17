@@ -1,0 +1,46 @@
+{
+  "run_id": "s6-maxsteps80",
+  "model": "openai/deepseek-flash",
+  "config": {
+    "max_steps": 80,
+    "cost_limit": 0.5,
+    "wall_clock_limit": 1800.0,
+    "keep_full_observations": 5,
+    "max_consecutive_tool_errors": 5,
+    "max_file_edit_failures": 3,
+    "max_empty_replies": 2
+  },
+  "elapsed_seconds": 227.5,
+  "instances": [
+    {
+      "instance_id": "django__django-10554",
+      "stop_reason": "max_steps",
+      "steps": 87,
+      "api_calls": 80,
+      "cost": 0.0,
+      "loop_seconds": 213.7,
+      "wall_seconds": 227.5,
+      "patch_chars": 0,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-17630",
+      "stop_reason": "max_steps",
+      "steps": 85,
+      "api_calls": 80,
+      "cost": 0.0,
+      "loop_seconds": 207.3,
+      "wall_seconds": 218.7,
+      "patch_chars": 766,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    }
+  ]
+}
