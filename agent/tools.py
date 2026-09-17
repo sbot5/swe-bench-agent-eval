@@ -1131,7 +1131,14 @@ def apply_patch(env: DockerEnvironment, path: str, old_string: str, new_string: 
     )
 
 
-_FAILING_STATUSES: Final[frozenset[str]] = frozenset({"FAILED", "ERROR"})
+_PASSING_STATUSES: Final[frozenset[str]] = frozenset({"PASSED", "SKIPPED", "XFAIL"})
+"""只有这几个状态算「过了」，其余一律算没过 —— 白名单，不是黑名单（T10）。
+
+09-17 S4 的教训：SWE-bench 的 pytest parser 按 `line.startswith(状态)` 认行，
+`ERROR: -o/--override-ini expects option=value style.` 被当成一条测试，状态是**带冒号的 `ERROR:`**，
+黑名单 `{"FAILED", "ERROR"}` 认不出来，于是一次都没跑起来的运行被报成 `All 1 test(s) passed`。
+parser 的输出是第三方数据：key 未必是测试、value 未必是已知状态。全文见 DESIGN-tools.md §五。
+"""
 
 
 def _split_test_targets(target: str) -> list[str] | None:
@@ -1183,10 +1190,11 @@ def run_tests(
     """在容器里跑测试：test_command 后面接 target，通过的测试只报数量，失败的报名字和原始输出尾部。
 
     测试挂了仍然是 ok —— 工具完成了它的活（observation 决定 1、3）。
-    一条测试结果都解析不出来 -> UNCLASSIFIED；参数错 -> INVALID_ARGUMENT；超时 -> TIMEOUT。
+    一条测试结果都解析不出来 -> UNCLASSIFIED；解析出来的全是「过了」但命令非零退出 -> 同样 UNCLASSIFIED（T11）；
+    参数错 -> INVALID_ARGUMENT；超时 -> TIMEOUT。
     test_command / log_parser / target_hint 由 run.py 按实例绑定，模型看不到这三个参数；
     **target 没有默认值**，因为默认跑评分目标等于告诉模型 grader 用哪些测试（T8）。
-    决定 T1–T9：docs/DESIGN-tools.md §四。
+    决定 T1–T11：docs/DESIGN-tools.md §四。
     """
     args_ctx = f"target: {target!r}, test_command: {test_command!r}, timeout: {timeout!r}"
 
@@ -1274,23 +1282,40 @@ def run_tests(
             ],
         )
 
-    # 6. 通过的测试对模型零信息量，只留数量；失败的给名字（T4）
-    failed = sorted(name for name, status in status_map.items() if status in _FAILING_STATUSES)
+    # 6. 通过的测试对模型零信息量，只留数量；没过的给名字（T4）
+    not_passing = sorted(name for name, status in status_map.items() if status not in _PASSING_STATUSES)
     tally = ", ".join(f"{count} {status.lower()}" for status, count in counts.items())
 
+    # 6'. 第二道防线：解析出来的全是「过了」，可命令自己非零退出 —— 这一跑不算数（T11）
+    #     pytest 测试失败时退出码也非零，所以只在 not_passing 为空时才判，不会误伤正常的失败。
+    if not not_passing and exec_result.exit_code != 0:
+        return Observation.error(
+            failure_category=FailureCategory.UNCLASSIFIED,
+            summary=(
+                f"The test command exited with code {exec_result.exit_code} although all "
+                f"{len(status_map)} parsed result(s) look passing ({tally}) — the run did not complete"
+            ),
+            content=f"{run_ctx}\n\n{_keep_tail(log, MAX_CONTENT_CHARS - len(run_ctx) - 4)}",
+            next_actions=[
+                "Read the output above: the test runner itself failed, so these results do not mean your change works.",
+                "If the failure is caused by your own edit (an import error, a syntax error), fix the edit first.",
+                f"Otherwise run a different target in the form this repository uses: {hint}.",
+            ],
+        )
+
     blocks: list[str] = [run_ctx]
-    if failed:
-        shown = failed[:_MAX_FAILED_TESTS_SHOWN]
+    if not_passing:
+        shown = not_passing[:_MAX_FAILED_TESTS_SHOWN]
         listing = "\n".join(f"- {name}" for name in shown)
-        if len(failed) > len(shown):
-            listing += f"\n- ... and {len(failed) - len(shown)} more"
-        blocks.append(f"Failing tests:\n{listing}")
+        if len(not_passing) > len(shown):
+            listing += f"\n- ... and {len(not_passing) - len(shown)} more"
+        blocks.append(f"Tests that did not pass:\n{listing}")
 
     spent = sum(len(block) + 2 for block in blocks)
     blocks.append(_keep_tail(log, max(0, MAX_CONTENT_CHARS - spent)))
 
-    if failed:
-        summary = f"{len(failed)} test(s) failing out of {len(status_map)} ({tally})"
+    if not_passing:
+        summary = f"{len(not_passing)} test(s) not passing out of {len(status_map)} ({tally})"
         next_actions = [
             "Read the traceback above, then use search_code / read_file to find the code it points at.",
             "Fix the cause with apply_patch, then run the same target again to confirm it now passes.",

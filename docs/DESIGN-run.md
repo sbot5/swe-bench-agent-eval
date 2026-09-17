@@ -132,6 +132,15 @@ swebench eval verified -p results/inference/s4-mine/preds.json --run-id s4-mine 
 **影响面**：§三那张表里 `pytest -rA -vv -o console_output_style=classic` 这个前缀有 **3 条**实例，
 S4 只抽中 1 条。**S5 跑 25 条之前必须先修**，否则老 pytest 的实例全部拿不到有效测试反馈。
 
+**已修（09-17，S5 之前）**：判定改白名单（T10）+ 退出码非 0 不报 ok（T11），容器内实测复现并确认
+同一条命令现在报 `1 test(s) not passing out of 1`。**没做**「target 不再拼在末尾」那条 ——
+所以 pytest < 3.4 的实例**仍然跑不起测试**，区别是模型看得见自己没跑起来，不会再误判成通过。
+
+**S5 的影响面只有 1 条**【推算，09-17 在 75 条上跑 `derive_test_command` 数的】：带这个前缀的 3 条里，
+`astropy__astropy-7166` 在 subset（S5 要跑的 25 条），另外两条 `astropy__astropy-7336`、
+`astropy__astropy-7671` 在 **holdout**，S5 不跑。这两条的 pytest 版本**没验过**【未知】——
+只有 7166 进过容器实测（3.3.1）。S5 的 unresolved 归因里 7166 要单列，不能算进「模型能力不足」。
+
 **② `django__django-13512`：FAIL_TO_PASS 1/3，改动范围不足。**
 模型只改了 `django/forms/fields.py` 的 `prepare_value`（加 `ensure_ascii=False`），过了
 `test_prepare_value`；挂掉的两条 `test_json_display_for_field`、`test_label_for_field` 都在

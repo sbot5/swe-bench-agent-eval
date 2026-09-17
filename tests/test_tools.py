@@ -145,8 +145,51 @@ def test_run_tests_reports_only_the_failures():
     obs = run_tests(env, "tests/test_x.py",
                     log_parser=lambda _: {"tests/test_x.py::test_a": "FAILED", "tests/test_x.py::test_b": "PASSED"})
     assert obs.status == ToolStatus.OK  # 测试挂了不是工具失败（observation 决定 1、3）
-    assert obs.summary.startswith("1 test(s) failing out of 2")
+    assert obs.summary.startswith("1 test(s) not passing out of 2")
     assert "test_a" in obs.content and "- tests/test_x.py::test_b" not in obs.content
+
+
+def test_run_tests_counts_skipped_and_xfail_as_passing():
+    """白名单里的三个状态都算过了：只有 PASSED/SKIPPED/XFAIL 不进「没过」名单（T10）。"""
+    env = FakeEnvironment([ok(stdout="...\n", exit_code=0)])
+    obs = run_tests(env, "tests/test_x.py",
+                    log_parser=lambda _: {"a": "PASSED", "b": "SKIPPED", "c": "XFAIL"})
+    assert obs.status == ToolStatus.OK
+    assert obs.summary.startswith("All 3 test(s) passed")
+
+
+def test_run_tests_does_not_trust_a_status_it_does_not_know():
+    """黑名单认不出带冒号的 `ERROR:`，白名单必须认出来（T10，S4 astropy-7166）。"""
+    env = FakeEnvironment([ok(stdout="ERROR: -o/--override-ini expects option=value style.\n", exit_code=4)])
+    obs = run_tests(env, "astropy/utils/tests/test_misc.py::test_inherit_docstrings",
+                    log_parser=lambda _: {"-o/--override-ini": "ERROR:"})
+    assert "passed" not in obs.summary
+    assert obs.summary.startswith("1 test(s) not passing out of 1")
+    assert "- -o/--override-ini" in obs.content
+
+
+def test_run_tests_rejects_a_clean_parse_when_the_command_itself_failed():
+    """第二道防线：全是 PASSED 但退出码非零 -> 这一跑不算数，报 error（T11）。"""
+    env = FakeEnvironment([ok(stdout="PASSED a\n", exit_code=2)])
+    obs = run_tests(env, "tests/test_x.py", log_parser=lambda _: {"a": "PASSED"})
+    assert obs.status == ToolStatus.ERROR and obs.failure_category == FailureCategory.UNCLASSIFIED
+    assert "exited with code 2" in obs.summary
+
+
+def test_run_tests_replays_the_s4_astropy_false_pass_through_the_real_parser():
+    """S4 的原样回放：真 parser + 容器里实际打出的那一行，端到端不许再报 passed（T10）。
+
+    黑名单版在这里会报 `All 1 test(s) passed (1 error:)` 并且 status=ok —— 就是 09-17 那条假信号。
+    日志、退出码 4、parser（astropy 走 parse_log_astropy）都取自 09-17 的容器实测，见 DESIGN-tools.md §五。
+    """
+    from swebench.harness.log_parsers.python import parse_log_astropy
+
+    log = "ERROR: -o/--override-ini expects option=value style.\n"
+    env = FakeEnvironment([ok(stdout=log, exit_code=4)])
+    obs = run_tests(env, "astropy/utils/tests/test_misc.py::test_inherit_docstrings",
+                    log_parser=lambda text: parse_log_astropy(text, None))
+    assert "passed" not in obs.summary, "运行器自己报错退出，不许报成通过"
+    assert obs.summary.startswith("1 test(s) not passing out of 1")
 
 
 def test_git_diff_says_so_when_nothing_changed():
@@ -203,6 +246,8 @@ def test_git_diff_survives_an_unreadable_untracked_listing():
         (lambda env: run_tests(env, "x", timeout=99999), [], FailureCategory.INVALID_ARGUMENT),
         (lambda env: run_tests(env, "x"), [timed_out()], FailureCategory.TIMEOUT),
         (lambda env: run_tests(env, "x"), [ok(stdout="boom", exit_code=1)], FailureCategory.UNCLASSIFIED),
+        (lambda env: run_tests(env, "x", log_parser=lambda _: {"a": "PASSED"}),
+         [ok(stdout="PASSED a", exit_code=2)], FailureCategory.UNCLASSIFIED),
         (lambda env: git_diff(env, "/etc"), [], FailureCategory.PATH_OUTSIDE_ROOT),
     ],
 )
