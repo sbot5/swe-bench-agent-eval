@@ -1,0 +1,391 @@
+{
+  "run_id": "p2-mine",
+  "model": "openai/deepseek-flash",
+  "config": {
+    "max_steps": 40,
+    "cost_limit": 0.5,
+    "wall_clock_limit": 1800.0,
+    "keep_full_observations": 5,
+    "max_consecutive_tool_errors": 5,
+    "max_file_edit_failures": 3,
+    "max_empty_replies": 2
+  },
+  "elapsed_seconds": 698.8,
+  "instances": [
+    {
+      "instance_id": "astropy__astropy-14182",
+      "stop_reason": "finished",
+      "steps": 37,
+      "api_calls": 34,
+      "cost": 0.0,
+      "loop_seconds": 84.8,
+      "wall_seconds": 93.4,
+      "patch_chars": 722,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "astropy__astropy-7166",
+      "stop_reason": "finished",
+      "steps": 17,
+      "api_calls": 16,
+      "cost": 0.0,
+      "loop_seconds": 42.7,
+      "wall_seconds": 46.4,
+      "patch_chars": 810,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-10554",
+      "stop_reason": "max_steps",
+      "steps": 47,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 117.8,
+      "wall_seconds": 128.5,
+      "patch_chars": 0,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-11138",
+      "stop_reason": "max_steps",
+      "steps": 48,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 77.5,
+      "wall_seconds": 83.5,
+      "patch_chars": 0,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-11163",
+      "stop_reason": "finished",
+      "steps": 10,
+      "api_calls": 11,
+      "cost": 0.0,
+      "loop_seconds": 15.6,
+      "wall_seconds": 15.9,
+      "patch_chars": 570,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-11728",
+      "stop_reason": "finished",
+      "steps": 25,
+      "api_calls": 19,
+      "cost": 0.0,
+      "loop_seconds": 62.0,
+      "wall_seconds": 67.5,
+      "patch_chars": 1098,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-12039",
+      "stop_reason": "finished",
+      "steps": 21,
+      "api_calls": 16,
+      "cost": 0.0,
+      "loop_seconds": 30.2,
+      "wall_seconds": 33.4,
+      "patch_chars": 1271,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-12262",
+      "stop_reason": "finished",
+      "steps": 9,
+      "api_calls": 9,
+      "cost": 0.0,
+      "loop_seconds": 24.4,
+      "wall_seconds": 24.6,
+      "patch_chars": 716,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-13512",
+      "stop_reason": "finished",
+      "steps": 13,
+      "api_calls": 9,
+      "cost": 0.0,
+      "loop_seconds": 20.0,
+      "wall_seconds": 23.5,
+      "patch_chars": 534,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-14631",
+      "stop_reason": "max_steps",
+      "steps": 48,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 87.3,
+      "wall_seconds": 95.6,
+      "patch_chars": 4197,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "django__django-15863",
+      "stop_reason": "finished",
+      "steps": 11,
+      "api_calls": 11,
+      "cost": 0.0,
+      "loop_seconds": 22.1,
+      "wall_seconds": 24.5,
+      "patch_chars": 463,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24970",
+      "stop_reason": "finished",
+      "steps": 36,
+      "api_calls": 32,
+      "cost": 0.0,
+      "loop_seconds": 124.3,
+      "wall_seconds": 135.3,
+      "patch_chars": 821,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "pydata__xarray-4356",
+      "stop_reason": "max_steps",
+      "steps": 44,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 151.2,
+      "wall_seconds": 164.1,
+      "patch_chars": 840,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "pylint-dev__pylint-4551",
+      "stop_reason": "max_steps",
+      "steps": 40,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 91.4,
+      "wall_seconds": 99.6,
+      "patch_chars": 0,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "pylint-dev__pylint-8898",
+      "stop_reason": "max_steps",
+      "steps": 57,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 85.5,
+      "wall_seconds": 93.4,
+      "patch_chars": 0,
+      "tool_errors": 2,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-11510",
+      "stop_reason": "max_steps",
+      "steps": 48,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 143.1,
+      "wall_seconds": 153.5,
+      "patch_chars": 0,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-7889",
+      "stop_reason": "finished",
+      "steps": 28,
+      "api_calls": 23,
+      "cost": 0.0,
+      "loop_seconds": 85.1,
+      "wall_seconds": 93.9,
+      "patch_chars": 590,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8638",
+      "stop_reason": "max_steps",
+      "steps": 48,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 136.4,
+      "wall_seconds": 147.5,
+      "patch_chars": 0,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-9698",
+      "stop_reason": "finished",
+      "steps": 12,
+      "api_calls": 12,
+      "cost": 0.0,
+      "loop_seconds": 32.4,
+      "wall_seconds": 36.0,
+      "patch_chars": 624,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-9711",
+      "stop_reason": "max_steps",
+      "steps": 51,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 141.8,
+      "wall_seconds": 152.4,
+      "patch_chars": 0,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-13757",
+      "stop_reason": "finished",
+      "steps": 39,
+      "api_calls": 32,
+      "cost": 0.0,
+      "loop_seconds": 93.8,
+      "wall_seconds": 101.4,
+      "patch_chars": 443,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-13852",
+      "stop_reason": "max_steps",
+      "steps": 50,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 188.3,
+      "wall_seconds": 204.1,
+      "patch_chars": 1237,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-17630",
+      "stop_reason": "max_steps",
+      "steps": 45,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 89.7,
+      "wall_seconds": 97.9,
+      "patch_chars": 0,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-18211",
+      "stop_reason": "max_steps",
+      "steps": 46,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 143.3,
+      "wall_seconds": 154.4,
+      "patch_chars": 0,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    },
+    {
+      "instance_id": "sympy__sympy-24661",
+      "stop_reason": "finished",
+      "steps": 32,
+      "api_calls": 29,
+      "cost": 0.0,
+      "loop_seconds": 64.2,
+      "wall_seconds": 69.5,
+      "patch_chars": 1536,
+      "tool_errors": 1,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    }
+  ]
+}
