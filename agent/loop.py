@@ -127,18 +127,24 @@ class LoopConfig:
 SYSTEM_PROMPT: Final[str] = """\
 You are fixing one issue in a Python repository that is already checked out at /testbed.
 
-You work only through the tools listed below. There is no shell: if a tool cannot do it, it cannot be done.
+You work only through the tools listed below. The container has no network access: nothing can be
+downloaded, fetched or cloned, so every answer has to come from the code in front of you.
 Every tool answers with <summary>, sometimes <content>, and <next_actions>. When a tool reports an error,
 read its <next_actions> before trying anything else — they tell you both what to retry and when to stop.
 
 How to work:
 1. Find the code the issue is about, with search_code and list_files.
 2. read_file the relevant code before editing it. Never edit text you have not read in this session.
-3. Make the smallest change that fixes the reported behaviour, with apply_patch.
-4. Run the tests that cover the code you changed, with run_tests.
-5. Call git_diff to check you changed only what you meant to, then call finish.
+3. Reproduce the reported behaviour with run_python before you change anything. Reading code tells you what
+   it should do; running it tells you what it does. Keep that script — you will rerun it to check your fix.
+4. Make the smallest change that fixes the reported behaviour, with apply_patch.
+5. Rerun your run_python script to confirm the behaviour changed, then run the tests that cover the code
+   you edited, with run_tests.
+6. Call git_diff to check you changed only what you meant to, then call finish.
 
 Rules that matter for how your work is graded:
+- Change repository files with apply_patch, not with run_python. apply_patch checks that the text you are
+  replacing is really there; a script that rewrites a file silently does the wrong thing when it is wrong.
 - Do not modify or add tests. Your change is graded by tests you cannot see.
 - Do not undo your change before finishing; an empty diff scores zero.
 - Fix the cause described in the issue, not just the one example in it.
@@ -216,6 +222,26 @@ _TOOL_SCHEMAS: Final[list[dict]] = [
                 "timeout": {"type": "integer", "description": "Seconds to allow, at most 900. Defaults to 300."},
             },
             "required": ["target"],
+        },
+    },
+    {
+        "name": "run_python",
+        "description": (
+            "Run a one-off Python script in the repository environment and return its output and exit code. "
+            "Use it to reproduce the reported behaviour before you fix it, and to check the fix afterwards. "
+            "The script runs in /testbed, so it can import the repository code. Nothing is remembered between "
+            "calls, and the container has no network."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The whole script, exactly as you would write it in a .py file.",
+                },
+                "timeout": {"type": "integer", "description": "Seconds to allow, at most 300. Defaults to 60."},
+            },
+            "required": ["code"],
         },
     },
     {

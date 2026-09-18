@@ -54,8 +54,13 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 | C13 | 模型叫不动 → 连接类错误**指数退避重试 4 次带抖动**，其余（认证错、请求体非法）直接判死 | S2 实测中转站抖过一次 `ServiceUnavailableError`，litellm 自动重试后恢复；但重试一个 400 只是把时间烧掉。抖动是因为整批并行时几个 worker 会同时被限流，同步重试会再撞一次 | 一律重试 · 一律不重试 |
 | C14 | 模型客户端单独一个 `model.py`，`loop.py` 不 import litellm | 测试注入假客户端时不用装 litellm，也不会被它的全局状态（`drop_params`）影响 | 写在 loop 里 |
 | C15 | **把响应里的 `model` 字段记进每一步** | 执行计划 §八 的悬置项：「中转站是否真的给的是 luna」——09-06 发现 `preds.json` 里的 `model_name_or_path` 是**请求的名字不是返回的名字**，无法证伪。记下 `response.model` 就有了证据链；`summary.json` 里按实例汇总成 `returned_models` | 只记请求的名字（等于没记） |
-| C16 | system prompt 里写死「**There is no shell**」 | DESIGN-environment §七 压下来的义务是「告诉模型 `cd` 不持久」。比解释 `cd` 更彻底的是让模型根本没有发 shell 命令的途径 —— 六个工具每次都是新进程，压根没有「当前目录」这个概念 | 解释 `cd` 的行为（多一条它要记住的规则） |
+| C16 | ~~system prompt 里写死「**There is no shell**」~~ ⚠️ **09-18 作废，被 C18 取代**（加了 run_python，这句变成假话）。原判据仍抄在这里，因为它解释了 C18 为什么要换一种方式满足同一条义务： | DESIGN-environment §七 压下来的义务是「告诉模型 `cd` 不持久」。比解释 `cd` 更彻底的是让模型根本没有发 shell 命令的途径 —— 六个工具每次都是新进程，压根没有「当前目录」这个概念 | 解释 `cd` 的行为（多一条它要记住的规则） |
 | C17 | prompt 里写死「不许改测试」「空 diff 得零分」「改病因不改症状」 | 这三条各自对应一类失败：改测试会被 harness 的 `git checkout` 抹掉、空 diff 直接 0 分、只改症状是失败模式 2（最大的一桶）。**这是 prompt 里唯一允许写的任务知识**，因为它讲的是评分规则，不是这道题的答案 | 写「可能在 X 文件里」这类提示（泄露答案） |
+| C18 | **删掉「There is no shell」，改写死「容器没有网」**（09-18，取代 C16） | 加了 `run_python` 之后 C16 那句是**假话** —— Python 能 `subprocess.run`，模型有 shell。prompt 撒谎有两重代价：面试官一问就穿；模型信了就不敢用 run_python。DESIGN-environment §七 那条「告诉模型 `cd` 不持久」的义务改由 run_python 的工具描述承担（「Nothing is remembered between calls」）。**新写死的那句（没有网）是真的**，负对照验过（DESIGN-tools §四 Y2） | 留着那句不改（撒谎）· 只删不补（模型不知道联网会失败，会白烧几轮去试） |
+| C19 | 工作流里**插一步「先用 run_python 复现，再动手」**，并写死「改文件用 apply_patch 不用 run_python」 | 前半是 P2 要测的假设本身：P1 量出「跑复现脚本」是三方对照里唯一没被断网消掉的能力差，而 A 组 9 条的病是 `apply_patch=0`「从未动手」——给它一个**比继续 read_file 更具体的第一步**。后半是防 run_python 绕过 apply_patch：绕过去既没有锚点唯一性检查，也让归因表里的 `apply_patch` 计数失真（⑪ 全靠这个量判别的） | 不插复现步（那就没测到 P1 量出的那条能力差）· 插了但不禁止用它改文件（`apply_patch=0` 这个判别量当场失效） |
+
+⚠️ **C18/C19 的效果现在【未知】**：P1 只证明了能力差存在，**没有**证明补上它就能解掉那 9 条。
+⑦⑨ 的方差要求重复跑才压得住，所以下一次跑完**不许**拿单次结果说「run_python 提升了 X 分」。
 
 ## 四、`model.py` 的错误分类
 

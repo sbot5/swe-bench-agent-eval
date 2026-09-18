@@ -228,5 +228,5 @@ def test_the_run_tests_hint_reaches_the_schema_the_model_sees():
     assert "dotted test module" in run_tests_schema["function"]["description"]
     assert "dotted test module" in run_tests_schema["function"]["parameters"]["properties"]["target"]["description"]
     assert {s["function"]["name"] for s in schemas} == {
-        "list_files", "search_code", "read_file", "apply_patch", "run_tests", "git_diff", "finish",
+        "list_files", "search_code", "read_file", "apply_patch", "run_tests", "run_python", "git_diff", "finish",
     }

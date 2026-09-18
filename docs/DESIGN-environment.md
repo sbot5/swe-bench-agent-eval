@@ -49,7 +49,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 - `execute()` —— 跑一条命令，返回 `ExecResult`
 - `cleanup()` —— 销毁容器（`__exit__` 调）
 
-## 四、决策清单（31 条；29–31 是 09-15 外移 docstring 时补录的，原先只写在代码里）
+## 四、决策清单（32 条；29–31 是 09-15 外移 docstring 时补录的，原先只写在代码里）
 
 ### ExecResult（7 条）
 
@@ -63,7 +63,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 6 | `frozen=True` | 子进程结束那一刻的快照，改它没有物理含义。全字段是标量，没有「frozen 挡不住 list.append」那个洞 |
 | 7 | `__post_init__` 强制两条互斥契约 | 不强制的话 `timed_out=False` + `exit_code=None` 能构造出来 → 工具层 `if exit_code != 0` 把超时误判成命令失败 → **归因表串行且不报错** |
 
-### 容器生命周期（6 条）
+### 容器生命周期（7 条）
 
 | # | 决定 | 判据 |
 | --- | --- | --- |
@@ -74,6 +74,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 12 | uuid 而非固定名 | 实测重名直接 `Conflict` 失败 → 一次泄漏会让后续全部起不来 |
 | 13 | `docker run` 加 `timeout=120` | 镜像不在本地时 docker 会自动 pull，能拉几分钟 |
 | 30 | `2h` 写死在 `_start_container`，不做成构造参数 | 只有 `run.py` 一个调用点，没有第二个取值的需求；真出现了再提参数 |
+| 32 | **`docker run` 加 `--network=none`**（09-18，为 P2 的 `run_python` 加） | `run_python` 让模型能执行任意 Python，`import socket` 在**语言层拦不住**（monkeypatch 会被 `importlib.reload` 绕开，`os.system('curl …')` 根本不过 socket 模块）—— 沙箱边界只能由容器给。不加的话就是 P1 抓到的那条路：下载上游 PR 的 `.patch` 再 `git apply`（`docs/EVAL-S5-baseline-nonet.md`）。**负对照实测**：同镜像默认网络打 github.com 得 `REACHED THE NETWORK`，加了之后 `gaierror [Errno -3]` —— 顺带证明此前我方容器**一直联得上外网**（当时无害，因为六个工具没一个能发请求，但那是运气不是设计）。loopback 不受影响，要起本地端口的测试照常跑（真容器验过）；断网后 6 个仓库各抽 1 条测试仍通过（`scripts/p2_nonet_run_tests_probe.py`），两条 FAIL 已用有网/无网对拍排除网络因素 |
 
 ### 错误处理（8 条）
 

@@ -31,6 +31,7 @@ from agent.tools import (
     git_diff,
     list_files,
     read_file,
+    run_python,
     run_tests,
     search_code,
 )
@@ -78,6 +79,15 @@ def test_keep_tail_never_returns_everything_when_limit_is_zero():
     assert _keep_tail("abcdef", 3).endswith("def")
     with pytest.raises(ValueError):
         _keep_tail("abc", -1)
+
+
+def test_keep_tail_counts_the_dropped_half_without_copying_it():
+    """丢掉的那半只数换行、不物化（Y6）：run_python 能 print 出任意大的输出，
+    原来的 text[:n].splitlines() 会把它整份复制再切成列表，直接打在宿主机内存上。"""
+    text = "a\n" * 1000 + "tail"
+    out = _keep_tail(text, 4)
+    assert out.endswith("tail")
+    assert "dropped the first 2000 chars / 1000 lines" in out
 
 
 def test_preview_shortens_only_long_strings():
@@ -248,6 +258,10 @@ def test_git_diff_survives_an_unreadable_untracked_listing():
         (lambda env: run_tests(env, "x"), [ok(stdout="boom", exit_code=1)], FailureCategory.UNCLASSIFIED),
         (lambda env: run_tests(env, "x", log_parser=lambda _: {"a": "PASSED"}),
          [ok(stdout="PASSED a", exit_code=2)], FailureCategory.UNCLASSIFIED),
+        (lambda env: run_python(env, ""), [], FailureCategory.INVALID_ARGUMENT),
+        (lambda env: run_python(env, "print(1)", timeout=99999), [], FailureCategory.INVALID_ARGUMENT),
+        (lambda env: run_python(env, "print(1)"), [ok(), timed_out()], FailureCategory.TIMEOUT),
+        (lambda env: run_python(env, "print(1)"), [ok(exit_code=1)], FailureCategory.UNCLASSIFIED),
         (lambda env: git_diff(env, "/etc"), [], FailureCategory.PATH_OUTSIDE_ROOT),
     ],
 )
@@ -325,3 +339,78 @@ def test_model_written_arguments_are_quoted_before_they_reach_the_shell():
     run_tests(env, "t.py; rm -rf /", log_parser=lambda _: {"t": "FAILED"})
     assert "'t.py;'" in env.commands[0]
     assert "t.py; rm" not in env.commands[0]
+
+
+def test_run_python_reports_the_exit_code_it_actually_got():
+    env = FakeEnvironment([ok(), ok(stdout="value is 3\n", exit_code=0)])
+    obs = run_python(env, "print('value is', 3)")
+    assert obs.status == ToolStatus.OK
+    assert obs.summary.startswith("Script finished with exit code 0")
+    assert "value is 3" in obs.content
+    assert env.exhausted  # 就两条命令：写脚本、跑脚本
+
+
+def test_run_python_is_ok_when_the_script_itself_raises():
+    """脚本挂了是工具完成了它的活，不是工具失败（Y4，同 T6）。"""
+    env = FakeEnvironment([ok(), ok(stdout='Traceback:\nValueError: boom\n', exit_code=1)])
+    obs = run_python(env, "raise ValueError('boom')")
+    assert obs.status == ToolStatus.OK
+    assert obs.summary.startswith("Script exited with code 1")
+    assert "finished with exit code 0" not in obs.summary, "非零退出不许说成完成"
+    assert "ValueError: boom" in obs.content
+
+
+def test_run_python_does_not_mistake_the_scripts_own_exit_code_for_a_write_failure():
+    """Y5：写和跑分两条命令，所以脚本自己 sys.exit(94) 不会被当成「文件没写进去」。
+
+    单条命令加 `|| exit 94`（apply_patch 的写法）在这里就会误判 —— 那边 94 之后不再跑用户代码。
+    """
+    env = FakeEnvironment([ok(), ok(stdout="", exit_code=94)])
+    obs = run_python(env, "import sys; sys.exit(94)")
+    assert obs.status == ToolStatus.OK
+    assert obs.summary.startswith("Script exited with code 94")
+
+
+def test_run_python_stops_before_running_when_the_script_cannot_be_written():
+    env = FakeEnvironment([ok(stderr="No space left on device", exit_code=1)])
+    obs = run_python(env, "print(1)")
+    assert obs.status == ToolStatus.ERROR and obs.failure_category == FailureCategory.UNCLASSIFIED
+    assert env.exhausted, "写不进去就不该再跑第二条命令"
+
+
+def test_run_python_never_puts_the_script_on_the_command_line():
+    """code 是模型写的，只能 base64 送进去（Y1，同 P5）。"""
+    code = "print('a'); import os; os.system('rm -rf /')"
+    env = FakeEnvironment([ok(), ok(stdout="a\n")])
+    run_python(env, code)
+    assert code not in env.commands[0]
+    assert "rm -rf /" not in env.commands[0]
+    assert base64.b64encode(code.encode()).decode() in env.commands[0]
+    # 第二条命令只提脚本路径，代码一个字都不在里面
+    assert code not in env.commands[1]
+    assert "/tmp/agent_run_python.py" in env.commands[1]
+
+
+def test_run_python_writes_outside_the_repo_so_git_diff_stays_clean():
+    """脚本落在 /tmp，不落 /testbed —— 否则 git_diff 会把它列成未跟踪文件（Y9）。"""
+    env = FakeEnvironment([ok(), ok()])
+    run_python(env, "print(1)")
+    assert "/tmp/agent_run_python.py" in env.commands[0]
+    assert "/testbed" not in env.commands[0]
+
+
+def test_run_python_says_so_when_the_script_printed_nothing():
+    env = FakeEnvironment([ok(), ok(stdout="")])
+    obs = run_python(env, "pass")
+    assert obs.status == ToolStatus.OK
+    assert "no output" in obs.content
+
+
+def test_run_python_truncates_a_huge_output_at_the_tool_layer():
+    """Y6：截断在工具层做，不留给 observation —— 它只保护上下文、不保护落盘。"""
+    env = FakeEnvironment([ok(), ok(stdout="x" * 500_000 + "THE END")])
+    obs = run_python(env, "print('x' * 500_000)")
+    assert len(obs.content) < 100_000
+    assert obs.content.endswith("THE END")
+    assert "TRUNCATED" in obs.content
+    assert "500007 chars of output" in obs.summary, "报的是脚本真实输出量，不是截断后的量"

@@ -1,4 +1,4 @@
-"""真容器冒烟：六个工具在一条真实例上各跑一次，确认整条链是通的。
+"""真容器冒烟：七个工具在一条真实例上各跑一次，确认整条链是通的。
 
     .venv/bin/python -m pytest tests/test_container_smoke.py -v -m slow
 
@@ -6,11 +6,13 @@
 `git grep` 的真输出格式、`head -c`/`tail -c` 切片有没有改坏文件、conda 环境里测试跑不跑得起来。
 一条实例够了：这是冒烟，不是回归（取舍见 DESIGN-tools.md §七）。
 """
+import textwrap
+
 import pytest
 
 from agent.environment import DockerEnvironment
 from agent.observation import FailureCategory, ToolStatus
-from agent.tools import apply_patch, git_diff, list_files, read_file, run_tests, search_code
+from agent.tools import apply_patch, git_diff, list_files, read_file, run_python, run_tests, search_code
 
 IMAGE = "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"
 
@@ -88,3 +90,53 @@ def test_run_tests_runs_a_real_suite(env):
                     timeout=300, log_parser=lambda log: parser(log, spec))
     assert obs.status == ToolStatus.OK
     assert "passed" in obs.summary
+
+
+def test_run_python_runs_a_real_script_and_can_import_the_repository(env):
+    obs = run_python(env, "import astropy; print('VERSION', astropy.__version__)")
+    assert obs.status == ToolStatus.OK
+    assert obs.summary.startswith("Script finished with exit code 0")
+    assert "VERSION" in obs.content
+
+
+def test_run_python_gives_back_a_traceback_with_the_line_number(env):
+    """写成文件而不是 python -c 的理由（Y1）：traceback 要指到模型自己写的那一行。"""
+    obs = run_python(env, "x = 1\ny = 2\nraise ValueError('boom')\n")
+    assert obs.status == ToolStatus.OK  # 脚本挂了仍是工具完成了它的活
+    assert obs.summary.startswith("Script exited with code 1")
+    assert "line 3" in obs.content and "ValueError: boom" in obs.content
+
+
+def test_the_container_really_has_no_network(env):
+    """Y2 的验收。断网必须是真的 —— run_python 一旦有网，就是 P1 抓到的那条
+    「下载上游 PR 的 .patch 再 git apply」的路（docs/EVAL-S5-baseline-nonet.md）。"""
+    obs = run_python(env, textwrap.dedent("""
+        import socket
+        try:
+            socket.create_connection(("github.com", 443), timeout=5)
+            print("REACHED THE NETWORK")
+        except OSError as exc:
+            print("BLOCKED", type(exc).__name__)
+    """), timeout=30)
+    assert "REACHED THE NETWORK" not in obs.content
+    assert "BLOCKED" in obs.content
+
+
+def test_cutting_the_network_leaves_loopback_alone(env):
+    """断网不能误伤要起本地端口的测试。P1 在 mini 那边实测过，这里在我方容器上再验一次。"""
+    obs = run_python(env, textwrap.dedent("""
+        import socket
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        socket.create_connection(("127.0.0.1", server.getsockname()[1]), timeout=5)
+        print("LOOPBACK OK")
+    """), timeout=30)
+    assert "LOOPBACK OK" in obs.content
+
+
+def test_the_script_does_not_show_up_as_a_repository_change(env):
+    """Y9：脚本落 /tmp，git_diff 看不见它。"""
+    run_python(env, "open('/tmp/marker.txt', 'w').write('x')")
+    obs = git_diff(env)
+    assert "agent_run_python" not in obs.content

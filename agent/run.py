@@ -24,7 +24,7 @@ from typing import Any, Final
 
 from agent.environment import DockerEnvironment
 from agent.loop import EpisodeResult, LoopConfig, ModelClient, StopReason, build_tool_schemas, run_episode
-from agent.tools import apply_patch, git_diff, list_files, read_file, run_tests, search_code
+from agent.tools import apply_patch, git_diff, list_files, read_file, run_python, run_tests, search_code
 
 DATASET: Final[str] = "SWE-bench/SWE-bench_Verified"
 START_TEST_OUTPUT: Final[str] = ">>>>> Start Test Output"
@@ -104,7 +104,10 @@ def build_log_parser(instance: dict) -> Callable[[str], dict[str, str]]:
 
 
 def build_tools(env: DockerEnvironment, instance: dict) -> tuple[dict[str, Callable], str]:
-    """把六个工具绑到这条实例的容器和测试运行器上，返回 (工具表, 目标写法提示)。"""
+    """把七个工具绑到这条实例的容器和测试运行器上，返回 (工具表, 目标写法提示)。
+
+    run_python 不按实例绑任何东西：它跑的是模型自己写的脚本，没有可泄露的实例信息（同 T8 的口径）。
+    """
     test_command, hint = derive_test_command(instance)
     tools = {
         "list_files": partial(list_files, env),
@@ -114,6 +117,7 @@ def build_tools(env: DockerEnvironment, instance: dict) -> tuple[dict[str, Calla
         "git_diff": partial(git_diff, env),
         "run_tests": partial(run_tests, env, test_command=test_command,
                              log_parser=build_log_parser(instance), target_hint=hint),
+        "run_python": partial(run_python, env),
     }
     return tools, hint
 

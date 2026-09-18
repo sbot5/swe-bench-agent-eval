@@ -12,11 +12,13 @@
 >
 > 代码里的 docstring 只写契约；决定、实测、纠错都在这里。引用写函数名，不写行号 —— 行号会随代码漂移。
 
-## 一、六个工具与写的顺序
+## 一、七个工具与写的顺序
 
 ```
-read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
+read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff -> run_python
 ```
+
+`run_python` 是 09-18 加的第七个（P2）。它和前六个的区别、以及它把安全边界从工具层挪到容器层这件事，见 §四。
 
 先用 `read_file` 把「宿主机 -> docker exec -> 观察」这条链走通。全部通过 environment 执行，全部返回统一的 `Observation`。
 
@@ -25,7 +27,8 @@ read_file -> list_files -> search_code -> apply_patch -> run_tests -> git_diff
 1. 正常路径的返回，你自己读一遍能看懂在说什么
 2. 每条错误路径都有 根因 + 重试指令 + 停止条件（三种错手工各触发一次）
 3. 超大输入不炸：读万行文件、搜命中几千次的词，且截断被明确告知
-4. 安全边界生效：路径白名单挡住 /etc/passwd，命令 allowlist 挡住 rm -rf
+4. 安全边界生效：路径白名单挡住 /etc/passwd，模型写的参数一律 `shlex.quote`
+   （⚠️ **实现里从来没有「命令 allowlist」** —— 09-16 已按这条改过简历口径；09-18 加 run_python 后边界进一步移到容器层，见 §四 Y3）
 
 ## 三、read_file
 
@@ -297,6 +300,86 @@ git 默认 `-U3` 的三行上下文，在真实修复上足够唯一 —— 这�
 | G2 | `--stat` 与未跟踪清单**一条命令取回**，正文单独一条 | 两段形状不同（`?? ` 前缀 vs stat 表格），混不了，省一次往返；正文可能很大，要单独判断预算 | 三条命令 · 用分隔符把三段拼在一条命令里（分隔符可能出现在 diff 正文里） |
 | G3 | 正文超预算**截头部**，并引导按单文件再调 | `--stat` 已经说清楚改了几个文件，正文从头读才对得上；从尾部读会落在最后一个文件中间 | 复用 `_keep_tail`（测试输出才该留尾部） |
 
+### run_python(code, timeout=60) —— ✅ 09-18，Claude 写
+
+规格：在容器的 testbed 环境里跑一段一次性 Python 脚本，返回退出码和输出尾部。
+工作目录是 `/testbed`，脚本能 `import` 仓库代码；**容器没有网卡**；两次调用之间什么都不保留。
+
+**为什么加它**：P1 的三方对照量出「跑复现脚本」是**唯一没被断网消掉的能力差** —— 有网 mini 跑了
+76 次 / 19 个实例，断网后照用不误，我方根本没这个工具（`docs/EVAL-S5-baseline-nonet.md`）。
+⑪ 要求的「归因第一步是验证问题成立」由 P1 的干净对照分满足，所以这次不是猜着改。
+
+#### 执行步骤
+
+| 步 | 做什么 | 失败时 |
+| --- | --- | --- |
+| 1 | 校验 `timeout`（≥1 且 ≤ 300，比 run_tests 的 900 紧） | `INVALID_ARGUMENT` |
+| 2 | `code` 是非空 str | `INVALID_ARGUMENT` |
+| 3 | base64 编码，超 64KB 拒绝 | `INVALID_ARGUMENT` |
+| 3' | **单独一条命令**写脚本：`printf %s '<b64>' \| base64 -d > /tmp/agent_run_python.py`（Y5） | 写不进去 → `UNCLASSIFIED`，**并且不跑第 4 步** |
+| 4 | `( source /opt/miniconda3/bin/activate && conda activate testbed && python /tmp/agent_run_python.py ) 2>&1` | — |
+| 5 | 超时先判 | `TIMEOUT` |
+| 6 | 工具层截尾（Y6） | — |
+| 7 | 如实报退出码，**不判定成功** | — **ok**（脚本挂了也是 ok） |
+
+步号与 `tools.py` 里的注释一一对应；`3'` 这个写法沿用 run_tests 的 `2'` / `6'`（同一步的第二道）。
+
+#### 决策清单
+
+| # | 决定 | 判据 | 否决 |
+| --- | --- | --- | --- |
+| Y1 | `code` **base64 编码后写成文件**再跑，不用 `python -c` | 两条：① `-c` 把整段代码塞进进程命令行，撞 128KB 单参数上限（同 P5）② traceback 会显示 `File "<string>", line N`，模型对不上自己写的行。写成文件后是 `File "/tmp/agent_run_python.py", line 3` —— 真容器验过（`test_run_python_gives_back_a_traceback_with_the_line_number`） | `python -c` · 直接拼进 `bash -c`（模型写的引号会提前闭合） |
+| Y2 | **断网放在容器层**（`environment.py` 的 `--network=none`），不在语言层 | 语言层拦不住：monkeypatch `socket` 能被 `importlib.reload` 绕开，`os.system('curl …')` 根本不经过 socket 模块。沙箱边界只能由容器给。**负对照实测（09-18）**：同镜像默认网络打 github.com 得 `REACHED THE NETWORK`，加 `--network=none` 后 `gaierror [Errno -3] Temporary failure in name resolution` —— 顺带证明**此前我方容器确实联得上外网** | 在脚本前面注入 socket 屏蔽（绕得开）· 信任模型不联网（P1 已证 mini 会） |
+| Y3 | **承认 run_python 在能力上等价于 shell**，改口径而不是假装没有 | 诚实性。`subprocess.run(["rm", "-rf", "/testbed"])` 在 Python 里随手可做，面试官一问就穿。system prompt 里那句 `There is no shell: if a tool cannot do it, it cannot be done` 因此**必须删掉** —— 留着既是 prompt 在撒谎，也会让模型不敢用 run_python | 保留那句话 · 用正则筛 `code` 里的 `subprocess` / `os.system`（黑名单，T10 刚教过一次） |
+| Y4 | 脚本非零退出仍是 **ok**，但 summary **必须明写退出码** | 前半同 T6（`status` 答的是「工具有没有完成它的活」）。后半是 T10/T11 的直接应用：分不清的时候不许报成功。所以文案只有两种 —— `Script finished with exit code 0` / `Script exited with code N`，**没有「成功」这个词** | 非零 → `ERROR`（模型会以为工具坏了）· 一律说 "ran"（把失败糊过去） |
+| Y5 | **写脚本和跑脚本分成两条 `docker exec`**，不用哨兵退出码 | 单条命令里 `… \|\| exit 94`（apply_patch 用的写法）在这里会误判：脚本自己可以 `sys.exit(94)`。apply_patch 没这个问题，是因为它的 94 之后不再跑用户代码。代价是多一次往返约 50ms，对 60 秒的脚本可以忽略。单测 `test_run_python_does_not_mistake_the_scripts_own_exit_code_for_a_write_failure` 把这条钉住了 | 单条命令 + 哨兵码 · 用 stdout 标记分隔（脚本能打印同样的标记） |
+| Y6 | 截断在**工具层**做，且丢掉的那半**不物化** | P1 实测 mini 两条 trajectory 各 **204MB**，因为 observation 的截断只保护上下文、不保护落盘。run_python 是我方唯一能产生任意大输出的工具。顺带修掉 `_keep_tail` 原来的 `text[:n].splitlines()`（见 §五） | 只靠 observation 截断 · 不截断（落盘会炸） |
+| Y7 | `timeout` 默认 **60**、上限 **300**（run_tests 是 300 / 900） | 一次性复现脚本该在几秒内结束；`execute` 的超时只杀宿主机上的客户端、容器里的死循环还活着（DESIGN-environment §七），所以能省的墙钟要省。给得比 run_tests 宽没有任何用例支持 | 与 run_tests 同为 300/900 · 不设上限 |
+| Y8 | **不按实例绑任何东西**（没有 `log_parser`、没有 `target_hint`） | 与 T1 / T9 相反才是对的：run_tests 要白拿「这个仓库怎么跑测试」，run_python 跑的是模型自己写的脚本，没有实例信息可注入，也就**不存在泄露**，报告里也不必多交代一处。`run.py` 里它就是 `partial(run_python, env)` | 注入仓库用法提示 |
+| Y9 | 脚本落 **`/tmp/agent_run_python.py`**，不落 `/testbed` | 落 `/testbed` 不会污染答案（`extract_patch` 只取已跟踪文件的 diff，R5），但 `git_diff` 工具会把它列成**未跟踪文件**，模型会以为自己创建了文件。真容器验过 | 落 `/testbed` · 每次换随机文件名（脚本会堆积，模型也分不清上次跑的是哪份） |
+| Y10 | **不给 cwd 参数**，固定 `/testbed`（`execute` 的 `-w`） | 复现脚本要 `import` 仓库代码，`/testbed` 是唯一有意义的目录。多一个参数就多一条要校验的越界路径 | 给 `cwd` 参数 |
+| Y11 | **不解析输出、不判断脚本「成功」**，只如实转述 | T10 的反面：那条教训是「判定通过要用白名单」，而这里**没有任何白名单可用** —— 脚本想说什么只有模型自己知道。分不清就不判，把证据原样交回去 | 猜「有 Traceback 就是失败」（复现脚本的正常产物往往就是 traceback）· 猜「exit 0 就是修好了」 |
+
+#### 要主动说出口的三句
+
+1. **run_python 在能力上等价于 shell。**「我方 scaffold 不给模型 shell」这个说法**从 09-18 起作废，不要再讲**。
+   真实的边界不在语言层，在**容器层**：没有网卡，评测在容器之外做。我方与 mini 的能力差因此从
+   「有没有 shell」收窄成「有没有网」—— 而 P1 量的正是后者。
+2. **`--network=none` 是 09-18 才加的，此前我方容器一直有网。** 当时无害（六个工具没一个能发请求），
+   但那是运气不是设计。㉑ 说「错在我不在 baseline」，这是同一件事的另一半：
+   我给 baseline 配了有网容器，也给自己配了，只是自己的工具碰巧用不上。
+3. **加 run_python 会不会真的提分，现在【未知】。** P1 只证明了这条能力差存在、且没被断网消掉，
+   **没有**证明补上它就能解掉那 9 条 `apply_patch=0`。⑦⑨ 的方差要求重复跑才压得住，所以这次
+   不许拿单次跑的结果说「run_python 提升了 X 分」。
+
+#### 09-18 的实测（全部 $0）
+
+| 验的是什么 | 怎么验的 | 结果 |
+| --- | --- | --- |
+| 工具逻辑 | 假 env 单测 13 条（8 条 run_python + 4 条错误路径参数化 + 1 条 `_keep_tail`） | 全过；总数 99 → **112** |
+| 整条链通不通 | 真容器冒烟 5 条（跑脚本 / traceback 行号 / 断网 / loopback / 不进 git_diff） | 全过；总数 16 → **21**，7.6s |
+| 断网是不是真的 | **负对照**：同镜像同脚本，默认网络 vs `--network=none` | `REACHED THE NETWORK` vs `gaierror [Errno -3]` —— 测试不是空过 |
+| 断网有没有打坏 run_tests | 七个仓库各一条 PASS_TO_PASS，在无网容器里跑（`scripts/p2_nonet_run_tests_probe.py`） | 7/7 镜像 `network_reachable=False`；matplotlib / xarray / sphinx / sympy **通过**，pylint 无 PASS_TO_PASS 跳过，astropy 与 django 两条的归因见下 |
+| 那两条 FAIL 是不是断网造成的 | **有网 / 无网对拍原始输出**（`scripts/p2_nonet_control.py`） | 见下方「两条 FAIL 的归因」 |
+| 回放有没有回归 | gold 回放 25 条（断网容器里跑） | 25/25、0 编辑失败、7.8s；产出的 25 条 patch 与 `gold-replay-s25`、`gold-replay-post-runtests-fix` **逐字节相同**，所以 25/25 resolved 这个结论不需要重跑评测就成立 |
+| 有没有引入新的 lint | `ruff check agent/ tests/` 与 HEAD 的干净副本对比 | 先多出 3 条 ISC004（`next_actions` 里隐式拼接没加括号），已修；现在与基线**同为 15 条、规则分布一致** |
+
+#### 断网探针里两条 FAIL 的归因（09-18）
+
+七个仓库的探针跑完：4 个直接通过，pylint 那条 `PASS_TO_PASS` 为空跳过，两条 FAIL，
+**都不是断网造成的**。判法是有网 / 无网跑同一条命令对拍**原始输出**（`scripts/p2_nonet_control.py`）——
+不走 `run_tests`，因为要问的是「断网会不会改变测试本身」，解析那一层与这个问题无关。
+
+| 实例 | 探针报什么 | 有网 vs 无网 | 真因 |
+| --- | --- | --- | --- |
+| `astropy-7166` | `1 test(s) not passing out of 1 (1 error:)` | **逐字节相同**：两边都 exit 4、都是 `ERROR: -o/--override-ini expects option=value style.` | §五 那条已知的 pytest 3.3.1 `-o` 吞目标（⑤），⑧ 已判「明知不做」。顺带：**白名单 T10 在这里正确地拒绝把它报成通过** |
+| `django-13512` | `4 test(s) not passing out of 4 (4 error)` | **逐字节相同**：两边都 exit 0，测试通过 | **探针自己的错**：我把 `PASS_TO_PASS` 里的 `test_cyclic (admin_utils.tests.NestedObjectsTests)` 原样当 target，含空格被 `shlex.split` 拆成两个目标（T2）。改成 T9 要求的 `admin_utils.tests.NestedObjectsTests.test_cyclic` 就通过了 |
+
+⚠️ **一次没有复现的观察，不静默抹掉**：对照脚本**第一次**跑 django 那条报了「输出不同」。随后 **4 次**比较
+（bash `diff`、`difflib`、两次无网自对拍、对照脚本整个重跑一遍）全部逐字节相同，两边 stdout 长度都是 1539、
+stderr 都是空。**原因【未知】，没有复现。** 结论按能复现的那 4 次读（与网络无关），但这条记下来 ——
+下次再看到同样的抖动就有第二个数据点了。
+
 ## 五、已纠正的错误
 
 ### 设计判断（Claude 的，3 条）
@@ -496,6 +579,19 @@ _FAILING_STATUSES: Final[frozenset[str]] = frozenset({"FAILED", "ERROR"})
 以及**用真 parser 回放 S4 那一行日志**共 4 条，加错误路径参数化 1 条。
 假 env 99 passed / 真容器 16 passed / gold 回放 25/25 edit_errors=0（9.3s）。
 
+### `_keep_tail` 把丢掉的那半整份复制了一遍（2026-09-18，加 run_python 时发现）
+
+原来是 `dropped = text[: len(text) - limit]` 再 `dropped.splitlines()`，只为了在提示里写一句
+「丢了多少字符 / 多少行」。run_tests 时代这只是浪费；**run_python 让模型能 `print('x' * 10**9)`**，
+那一份复制就直接打在**宿主机**内存上，还要再切成上千万个字符串。
+改成 `text.count("\n", 0, dropped_chars)` —— 流式计数，一个字节都不分配（§四 Y6）。
+
+**这和 P1 抓到的 mini 两条 204MB trajectory 是同一个病的两个部位**：那边是**落盘**没保护，这边是**内存**没保护。
+提示语里的 `of test output` 一并改成 `of output`，因为现在两个工具共用它。
+
+⚠️ 这只挪走了一半风险：`environment.execute` 仍然用 `subprocess.run(capture_output=True)`
+把整份 stdout 读进宿主机内存，**那一步的峰值没人管**。见 §七。
+
 ## 六、实测数据（2026-09-14/15，WSL `.venv` Python 3.12.3；上半 shell 在 WSL 宿主机，下半进 astropy-12907 容器）
 
 | 事实 | 值 | 用在哪 |
@@ -561,6 +657,15 @@ _FAILING_STATUSES: Final[frozenset[str]] = frozenset({"FAILED", "ERROR"})
 - **apply_patch 的写回不是原子的**：`cat tmp > path` 中途失败会留下截断的文件。已在 `IO_ERROR` 的 next_actions 里
   要求模型先 `read_file` 查看当前状态（P11），但没有回滚。做回滚要先备份整个文件，和 P5「整文件不出容器」冲突，不做
 - **`run_tests` 白拿了运行器知识**：见 §四 T8 下面那段。报告里要写明，不能装作两边条件一样
+- **`run_python` 在能力上等价于 shell**：Python 能起子进程，所以路径白名单只约束前六个工具、不约束它。
+  边界移到了容器层（`--network=none` + 评测在容器之外做）。**「我方不给模型 shell」这个说法 09-18 起作废**，见 §四 Y3
+- **`environment.execute` 仍把整份 stdout 读进宿主机内存**：`run_python` 的截断（Y6）保护的是 Observation 和落盘，
+  `subprocess.run(capture_output=True)` 那一步没人管，一条 `print('x' * 10**9)` 仍能把宿主机吃掉。
+  要修得让 `execute` 改成流式读 + 上限。**本次不做** —— 判据是「能不能让某个面试追问变得可答」：
+  这条边界写在这里就已经可答了，改代码答不出更多
+- **断网对 `run_tests` 的影响只抽验了 6 个仓库各 1 条**（`scripts/p2_nonet_run_tests_probe.py`）：
+  pylint 那条 `PASS_TO_PASS` 为空没验到，且每个仓库只抽了一条测试。若某条实例的测试需要联网，
+  要到真跑时才暴露。旁证：P1 的 mini 断网跑 25 条 0 infra / 0 error（`docs/EVAL-S5-baseline-nonet.md`）
 
 ### `DESIGN-environment.md` §七 压在本模块的四条义务 —— 进度
 
@@ -568,5 +673,5 @@ _FAILING_STATUSES: Final[frozenset[str]] = frozenset({"FAILED", "ERROR"})
 | --- | --- |
 | 每条错误路径有停止条件 | ✅ 09-16 六个工具全部 error 的 next_actions 都写明「什么情况下别再试」；`tests/test_tools.py` 用 20 条参数化用例逐条断言 |
 | 拼参数用 `shlex.quote()` | ✅ 09-16 六个工具全覆盖：路径、pattern、第二遍的每个文件、`run_tests` 的每个目标、`apply_patch` 的 base64 串都 quote；整数参数由第 1 步保证是 int，不 quote |
-| 告诉模型 `cd` 不持久 | ✅ 09-16 在 `loop.py` 的 system prompt 里落地：「There is no shell: if a tool cannot do it, it cannot be done」—— 比解释 `cd` 更彻底，模型根本没有发 shell 命令的途径 |
-| 不用管道或 `set -o pipefail` | ✅ 09-16。唯一剩下的管道是 `apply_patch` 的 `printf %s '<b64>' \| base64 -d`：左端是常量串的内建命令，不会失败，右端的失败由 `\|\| exit 94` 接住。`run_tests` 的 `2>&1` 是重定向不是管道。**`git_diff` 第一版踩了这条**，见 §五 |
+| 告诉模型 `cd` 不持久 | ⚠️ **09-18 换了落地方式**。原来靠 system prompt 里「There is no shell: if a tool cannot do it, it cannot be done」那句 —— run_python 让它变成假话，已删（§四 Y3）。现在由 run_python 的工具描述承担：「Nothing is remembered between calls」；每次调用都是一条新的 `docker exec`，脚本里 `os.chdir` 只在那个进程内有效 |
+| 不用管道或 `set -o pipefail` | ✅ 09-16。唯一剩下的管道是 `apply_patch` 的 `printf %s '<b64>' \| base64 -d`：左端是常量串的内建命令，不会失败，右端的失败由 `\|\| exit 94` 接住。`run_tests` 的 `2>&1` 是重定向不是管道。**`git_diff` 第一版踩了这条**，见 §五。**09-18 补**：`run_python` 第 3' 步的 `printf %s '<b64>' \| base64 -d > …` 与 apply_patch 同形，但它**不用 `\|\| exit 94` 接**，而是单独成一条命令、按 `exit_code` 判（§四 Y5）—— 哨兵码会和脚本自己的 `sys.exit(94)` 撞 |

@@ -36,6 +36,7 @@ PYTHONPATH=. .venv/bin/python -m agent.run --run-id s4-mine --limit 10 --workers
 | R8 | 并行用 `ThreadPoolExecutor`，默认 **4** | 工作全在 `docker exec` 和 HTTP 上，是 IO 密集，线程够用；瓶颈是磁盘和内存不是 CPU（每条镜像约 1.5 GB，实测）。gold 回放用 5 并发跑 25 条无异常 | 多进程（没必要）· 串行（25 条要多花几倍时间） |
 | R9 | trajectory 里**同时存 `steps` 和完整 `messages`** | `steps` 是归因用的结构化表；`messages` 是出了怪事时唯一能复原现场的东西。gold 回放的 25 份加起来 516 KB，真跑会大些但仍可入库 | 只存 steps（复原不了）· 只存 messages（归因要现算） |
 | R10 | 评测产物从 `logs/evaluation/<run-id>/` 拷进 `results/evaluation/<run-id>/` | `logs/` 在 `.gitignore` 里（大而无人看）；`results/` 是入库的证据 | 直接入库 `logs/` |
+| R17 | **`run_python` 在 `build_tools` 里不绑任何实例信息**（09-18，P2） | 和 R2/T8 相反才是对的：`run_tests` 要按实例抽运行器前缀（并把评分目标剔掉），`run_python` 跑的是模型自己写的脚本，**没有实例信息可注入，也就不存在泄露**，报告里不必多交代一处。所以它就是 `partial(run_python, env)` 一行。规格与决定 Y1–Y11 见 `DESIGN-tools.md` §四 | 给它注入仓库用法提示（等于再白拿一条环境知识）|
 
 ## 三、实测（2026-09-16）
 

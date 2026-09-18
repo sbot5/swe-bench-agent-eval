@@ -67,6 +67,10 @@ class DockerEnvironment:
             f"swebench-agent-{uuid.uuid4().hex[:8]}",
             "-d",
             "--rm",
+            # ⚠️ run_python 让模型能执行任意 Python，`import socket` 在语言层拦不住（tools 决定 Y2）。
+            # 沙箱边界只能放在容器层：没有网卡，urllib / curl / git clone 一律失败，loopback 仍通，
+            # 所以要起本地端口的测试不受影响（P1 断网重跑实测，docs/EVAL-S5-baseline-nonet.md）。
+            "--network=none",
             self.image_name,
             "sleep", "2h"
         ]
