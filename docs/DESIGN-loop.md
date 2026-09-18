@@ -58,6 +58,7 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 | C17 | prompt 里写死「不许改测试」「空 diff 得零分」「改病因不改症状」 | 这三条各自对应一类失败：改测试会被 harness 的 `git checkout` 抹掉、空 diff 直接 0 分、只改症状是失败模式 2（最大的一桶）。**这是 prompt 里唯一允许写的任务知识**，因为它讲的是评分规则，不是这道题的答案 | 写「可能在 X 文件里」这类提示（泄露答案） |
 | C18 | **删掉「There is no shell」，改写死「容器没有网」**（09-18，取代 C16） | 加了 `run_python` 之后 C16 那句是**假话** —— Python 能 `subprocess.run`，模型有 shell。prompt 撒谎有两重代价：面试官一问就穿；模型信了就不敢用 run_python。DESIGN-environment §七 那条「告诉模型 `cd` 不持久」的义务改由 run_python 的工具描述承担（「Nothing is remembered between calls」）。**新写死的那句（没有网）是真的**，负对照验过（DESIGN-tools §四 Y2） | 留着那句不改（撒谎）· 只删不补（模型不知道联网会失败，会白烧几轮去试） |
 | C19 | 工作流里**插一步「先用 run_python 复现，再动手」**，并写死「改文件用 apply_patch 不用 run_python」 | 前半是 P2 要测的假设本身：P1 量出「跑复现脚本」是三方对照里唯一没被断网消掉的能力差，而 A 组 9 条的病是 `apply_patch=0`「从未动手」——给它一个**比继续 read_file 更具体的第一步**。后半是防 run_python 绕过 apply_patch：绕过去既没有锚点唯一性检查，也让归因表里的 `apply_patch` 计数失真（⑪ 全靠这个量判别的） | 不插复现步（那就没测到 P1 量出的那条能力差）· 插了但不禁止用它改文件（`apply_patch=0` 这个判别量当场失效） |
+| C20 | **把缓存/推理三个读数落进每一步**（`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` / `completion_tokens_details.reasoning_tokens`），**取不到时记 `None` 不记 `0`**（09-18，㉖ 的修法） | `EVAL-P2.md` §5.4 推「P2 贵一倍是前缀缓存失效」只能靠**三跑外推 + 独立探针**，因为轨迹里没有这一列 —— 而 DeepSeek 一直在返回它。**`None` 和 `0` 必须分开**：0 是冷跑第一次的**真读数**，None 是供应商没给；混成 0 就是 `cost=$0.0000` 那个假读数的翻版，那个坑的代价是至今止损只剩 `--max-steps`。09-18 离线验过（$0）litellm 1.100 的访问路径：`Usage.__init__` 里有 `## DEEPSEEK MAPPING ##` 把 hit 归一化进 `prompt_tokens_details.cached_tokens`，未识别字段在结尾 `for k, v in params.items(): setattr(...)` 原样挂上；**负对照下是属性缺失、details 对象为 None，不是 0** | 只记 `prompt_tokens`/`completion_tokens`（现状，等于没有 —— 这就是㉖）· 取不到记 0（假零，正是要修的病）· 用 `prompt_tokens - hit` 反推 miss（凭空造一个没人返回过的数，⚠️ 违反「不填补」）· 顺手把 `total_tokens`、`text_tokens` 一起落（这次只解决命中率一个问题） |
 
 ⚠️ **C18/C19 的效果现在【未知】**：P1 只证明了能力差存在，**没有**证明补上它就能解掉那 9 条。
 ⑦⑨ 的方差要求重复跑才压得住，所以下一次跑完**不许**拿单次结果说「run_python 提升了 X 分」。
@@ -76,13 +77,23 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 
 ## 五、测得到的和测不到的
 
-`tests/test_loop.py`（22 条，假客户端 + 假工具，秒级）覆盖：
+`tests/test_loop.py`（**20 条**，假客户端 + 假工具，秒级；原文写 22 条，见「已纠正的错误」第三处）覆盖：
 
 - 三个终止条件各一条 + 墙钟一条
 - 异常路径六条：连错即停、成功清零、同一文件三次拉黑、拉黑后不再进工具、成功一次解封、工具抛异常不炸
 - 模型写坏调用三条：工具名不存在、参数不是 JSON、参数名对不上签名
 - 上下文：裁剪保留最近 K 条、消息条数与角色序列不变、`keep_full=0`、超限后先裁再试
 - 工具表：目标写法提示进到了模型看到的 schema、七个名字齐全
+- 落盘的读数两条（09-18 随 C20 加）：缓存三列一路走到 `StepRecord`（`run.py` 是 `asdict(step)` 落盘的，
+  到这儿就等于到了 traj）；假客户端不给这三列时落 `None` 而不是 0
+
+`tests/test_model.py`（**7 条**，09-18 随 C20 新建，$0 不发请求）覆盖 `_to_reply` 的读数提取：
+
+- 主路径走 **litellm 自己的响应转换器**（`convert_to_model_response_object`），不是我手搓一个 usage 对象 ——
+  ㉖ 那个坑正是「裸 HTTP 探针证明了 API 会返回，但没人验过 litellm 透不透出来」，手搓就等于把同一个洞再挖一遍
+- 负对照（供应商不给 → 三列全 `None`）· 真零（`hit=0` 要留成 0）· 只给归一化字段 `cached_tokens` 也读得到 ·
+  连 `usage` 都没有时不炸 · `_first_int` 排掉 `bool`（它是 `int` 的子类，会静默变成 1/0）
+- **miss 没有归一化字段**，所以只给 `cached_tokens` 时 `cache_miss_tokens` 就是 `None`，不许拿 `prompt - hit` 补
 
 **测不到的（要等第一次真跑）**：
 
@@ -95,6 +106,8 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
   1/2 撞上限，**样本太小，还不能定要改成多少**，等 S4 的 10 条再看。
   ⚠️ `steps` 与 `api_calls` 不是一回事：那条 53 步里只有 40 次 API 调用，**`max_steps` 限的是后者**。
 - ✅ **`returned_models` 到底回什么** —— 09-16 实测 `["deepseek-flash"]`，与请求的名字对得上，C15 生效
+- 🟡 **缓存命中率** —— C20 已经把仪器装上并离线验过访问路径，但**真实命中率要等下一次真跑才拿得到**。
+  在那之前 `EVAL-P2.md` §5.4 的 88~89% 仍然只是**外推 + 探针**，不许当直读数引用
 
 ## 六、⚠️ 09-16 的阻塞（一）：挂着学校 VPN 时模型 API 连不上 —— **已解除**
 
@@ -265,3 +278,16 @@ tools 挂起并不影响后续请求（上表 C、D 之后的裸请求都 200）
 随后 19 轮采样【原文 `~/probe_uptime.sh` 输出】只挂 2 次（成功率 ~89%，`#12–#21` 连续 10 轮全通），
 **那次连续失败是低谷，不是常态**。`model.py` 的 4 次退避重试吃得掉这种抖动。
 教训：**说「不稳定」之前先采够样本**，一段连续失败不构成可用性结论。
+
+**第三处（09-18 随 C20 发现，都是交叉引用错，不影响行为）**：
+① `loop.py` 里 `ModelReply` 的 docstring 把 `returned_model` 标成「决定 C14」，
+上表里**记这件事的是 C15**（C14 是「model.py 单独一个模块」）。已改成 C15。
+② 本节原写 `tests/test_loop.py`「22 条」，但 09-18 加测试**之前** pytest 只收集到 18 条，加完是 20 条。
+22 这个数对不上任何一个时点，**来历【未知】**，按当前实测改成 20，不静默抹掉原数。
+
+**第四处（09-18，㉖ 的证据链有一环是我补上的）**：`EVAL-P2.md` §六 ㉖ 给
+「DeepSeek 返回 `prompt_cache_hit_tokens` / `_miss_` / `reasoning_tokens`」标的是【原文·实测】，
+但它引的 `scripts/p2_cache_probe.py` 走的是**裸 HTTP**，而且**只打印了 hit 和 miss，没打印 reasoning_tokens**。
+也就是说当时证的是「**API 返回**」，没证「**litellm 透出来**」，reasoning 那一项则连 API 侧都没直接证据。
+09-18 离线补齐了缺的两环（转换器路径 + 三列齐全），结论没变，但**原来的标注比证据强**。
+教训与⑳ 同型：**证据链要逐环点名，「实测过」三个字盖不住中间少的那一环。**

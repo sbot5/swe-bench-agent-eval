@@ -4,6 +4,7 @@
 而不是只写在设计文档里。用假客户端和假工具，秒级，不花钱。
 """
 import json
+from dataclasses import asdict
 
 import pytest
 
@@ -230,3 +231,28 @@ def test_the_run_tests_hint_reaches_the_schema_the_model_sees():
     assert {s["function"]["name"] for s in schemas} == {
         "list_files", "search_code", "read_file", "apply_patch", "run_tests", "run_python", "git_diff", "finish",
     }
+
+
+# ------------------------------------------------------------------ 落盘的读数
+
+def test_cache_readings_reach_the_step_record():
+    """缓存/推理三列要一路走到 StepRecord —— `run.py` 是 `asdict(step)` 落盘的，到这儿就等于到了 traj（决定 C20）。"""
+    client = ScriptedClient([ModelReply(
+        content="thinking", tool_calls=[call("read_file", path="a.py")], returned_model="fake",
+        prompt_tokens=1434, completion_tokens=42,
+        cache_hit_tokens=1280, cache_miss_tokens=154, reasoning_tokens=17,
+    )])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    step = result.steps[0]
+    assert (step.cache_hit_tokens, step.cache_miss_tokens, step.reasoning_tokens) == (1280, 154, 17)
+    assert asdict(step)["cache_hit_tokens"] == 1280  # 落盘走的就是 asdict
+
+
+def test_a_reply_without_cache_readings_records_none():
+    """假客户端不给这三列时落 None，不落 0 —— 「没读到」不许伪装成「没命中」。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    step = result.steps[0]
+    assert (step.cache_hit_tokens, step.cache_miss_tokens, step.reasoning_tokens) == (None, None, None)

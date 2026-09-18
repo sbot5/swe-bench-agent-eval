@@ -77,6 +77,17 @@ class LiteLLMClient:
         )
 
 
+def _first_int(*values) -> int | None:
+    """取第一个真是整数的读数；一个都没有就是 None —— **供应商没给，不等于 0**（决定 C20）。
+
+    bool 是 int 的子类，显式排掉，免得某天谁塞个 True 进来被当成 1。
+    """
+    for value in values:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
 def _to_reply(response) -> ModelReply:
     """把 litellm 的响应对象收敛成 ModelReply。算不出成本时记 0 并继续，不为了一个读数中断实例。"""
     message = response.choices[0].message
@@ -87,6 +98,8 @@ def _to_reply(response) -> ModelReply:
         cost = 0.0
 
     usage = getattr(response, "usage", None)
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    completion_details = getattr(usage, "completion_tokens_details", None)
     return ModelReply(
         content=message.content or "",
         tool_calls=parse_tool_calls(message.tool_calls or []),
@@ -95,4 +108,12 @@ def _to_reply(response) -> ModelReply:
         completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
         # 请求写的是 luna，返回的是什么要原样记下来 —— 执行计划 §八「中转站是否真给 luna」靠这一列查
         returned_model=getattr(response, "model", "") or "",
+        # 缓存命中率此前只能靠三跑外推（EVAL-P2.md §5.4），这三列是为了下次能直读（决定 C20）。
+        # litellm 1.100 把 DeepSeek 的 prompt_cache_hit_tokens 同时归一化进 prompt_tokens_details
+        # .cached_tokens，先读归一化的那个（换供应商也还在），再退回原样挂着的那个；
+        # miss 没有归一化字段，只有 DeepSeek 原样返回的那一个。
+        cache_hit_tokens=_first_int(getattr(prompt_details, "cached_tokens", None),
+                                    getattr(usage, "prompt_cache_hit_tokens", None)),
+        cache_miss_tokens=_first_int(getattr(usage, "prompt_cache_miss_tokens", None)),
+        reasoning_tokens=_first_int(getattr(completion_details, "reasoning_tokens", None)),
     )

@@ -62,7 +62,10 @@ class ModelReply:
     """模型一次回复的结果快照。
 
     returned_model 是**响应里**的模型名，不是请求时写的那个 —— 中转站有没有偷换模型只能靠它查
-    （执行计划 §八 的悬置项，在这里落实；决定 C14）。
+    （执行计划 §八 的悬置项，在这里落实；决定 C15）。
+
+    后三个缓存/推理读数默认 **None 而不是 0**：None = 供应商这次没给这个字段（仪器没读到），
+    0 = 真的一次都没命中。混成 0 就是 `cost=$0.0000` 那个坑的翻版 —— 假读数和真读数长得一样（决定 C20）。
     """
 
     content: str
@@ -71,6 +74,9 @@ class ModelReply:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     returned_model: str = ""
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 class ModelClient(Protocol):
@@ -95,6 +101,10 @@ class StepRecord:
     prompt_tokens: int
     completion_tokens: int
     returned_model: str
+    # 缓存/推理读数，口径同 ModelReply：None = 供应商没给，0 = 真的没命中（决定 C20）
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass
@@ -512,6 +522,9 @@ def run_episode(
                 prompt_tokens=reply.prompt_tokens,
                 completion_tokens=reply.completion_tokens,
                 returned_model=reply.returned_model,
+                cache_hit_tokens=reply.cache_hit_tokens,
+                cache_miss_tokens=reply.cache_miss_tokens,
+                reasoning_tokens=reply.reasoning_tokens,
             ))
 
             # 5. 异常路径：连着错到阈值就停，而不是重试到死（决定 C10）
