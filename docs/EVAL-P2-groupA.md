@@ -302,7 +302,7 @@ pip 的 `[Errno -3]` 就没了 —— `sphinx-11510` 轮 13 拿到的是**一个
    **验证法**：改 system prompt 明确禁止考古（「不要在 git 历史或文件系统里找修复」）再跑一次 ——
    但 ㉕ 已证**改 prompt 会让成本基线不可比**，且⑦⑨ 的方差要重复跑才压得住。**不建议现在做。**
 2. **`django-11138`（甲型，REPRO=0）为什么几乎不用新工具**：40 轮只调 4 次，本文没往下读它的
-   `thought` 与 `read_file` 序列。**$0 可查。**
+   `thought` 与 `read_file` 序列。**$0 可查。** **【已回答 09-18 → §十一】**
 3. **这 8 条在别的模型下是不是同样的分型**：n=1 单模型（`deepseek-flash`），⑦⑨ 的方差未压。
 4. **末段非诊断占比 76% vs 5% 的方差有多大**：单次跑，没有重复。按⑨ 的教训，
    **不得拿它当「修正有效」的验收线**，只能当本跑的描述。
@@ -311,7 +311,7 @@ pip 的 `[Errno -3]` 就没了 —— `sphinx-11510` 轮 13 拿到的是**一个
 
 ## 十、复现
 
-全部 **$0**，只读 `results/inference/p2-mine/`（25 条轨迹已入库）。脚本：`scripts/p2_groupa.py`。
+全部 **$0**，只读 `results/inference/p2-mine/`（25 条轨迹已入库）。脚本：`scripts/p2_groupa.py`（§十一 另有 `p2_11138.py` 与 `p2_11138_gold_lines.py`，复现命令在 11.10）。
 
 ```bash
 cd ~/swe-bench-eval
@@ -347,3 +347,237 @@ python3 scripts/p2_groupa.py net results/inference/p2-mine
 python3 scripts/p2_groupa.py dump results/inference/p2-mine sympy__sympy-17630
 python3 scripts/p2_groupa.py code results/inference/p2-mine django__django-14631 15
 ```
+
+---
+
+## 十一、追加（2026-09-18，**$0**）：`django-11138` 逐轮读完了 —— 答 §九第 2 条
+
+**范围**：只读 `results/inference/{p2-mine,s5-mine}/django__django-11138.traj.json`
+与 `results/inference/gold-replay-s25/`，加 SWE-bench Verified 的该行元数据（本地 HF 缓存）。
+`agent/` 一行未动，没发起任何模型调用。脚本 `scripts/p2_11138.py` · `scripts/p2_11138_gold_lines.py`。
+
+### 11.0 一句话
+
+**不是「没学会用新工具」，也不是「没找到地方」——是把 40 轮全用在定位上，而定位早就完成了。**
+gold 要改的 4 个文件它全读到（22 次 `read_file` 里 17 次落在这 4 个文件上），7 个 hunk 里 **5 个**被
+某一次 `read_file` **完整**读进过上下文，然后 **一次 `apply_patch` 都没调**。
+最像的机制解释是 **system prompt 第 3 条把「先复现」放成了动手的前置**，而题面给的 **MySQL 例子**在无网容器里
+按字面复现不了（⚠️ **但 SQLite 这条路是通的**，评分测试就用 SQLite 跑，见 11.6 限制 4）——
+而且轨迹里 **48/48 步 `thought` 全空**，**这条解释无法从记录里证实【未知】**。
+
+**和另两种分型的差别**（§三 的三型并排，三个口径都来自已落盘轨迹）：
+
+| | 甲 `django-11138` | 乙（考古主导，6 条） | 丙 `sympy-17630` |
+| --- | --- | --- | --- |
+| `run_python` 次数 | **4**（8 条里最少） | **5~26**（6 条实测：pylint-8898 5 · pylint-4551 9 · sympy-18211 14 · django-10554 13 · sphinx-8638 19 · sphinx-11510 26） | **15**（REPRO 14） |
+| 末 10 轮（31–40）还有没有非诊断调用（ARCH+BROWSE） | **没有**，考古只在轮 27–29，之后 11 轮再没用过 `run_python` | **6 条里 5 条有**（3~10 次）；**`pylint-8898` 没有** —— 考古同样始于轮 27、末 10 轮 0 次 `run_python`，与甲同形 | **没有**（末 10 轮 4 次，0 次非诊断；ARCH=0） |
+| 有没有跑过被测代码 | **没有，REPRO=0** | 有（REPRO 1~5 次；ARCH 占 21%~62%） | **有，14/15 是 REPRO** |
+| 卡在哪 | **定位做完了，就是不进编辑** | 沉在「找现成答案」里出不来 | 诊断到位、方向对，就是不动手 |
+
+→ 甲丙**都是「不动手」，但上游完全不同**：丙是跑过、缩到位了不敢改；甲是**连跑都没跑**。
+乙则根本没走到这一步。**「从未动手」这一句盖住了三种不同的病**，§三 的拆分在本条上被逐轮坐实。
+
+### 11.1 基本盘【原文·轨迹】
+
+| | P2 | S5 |
+| --- | --- | --- |
+| `stop_reason` | `max_steps` | `max_steps` |
+| 轮数 / 工具调用数 | 40 / 48 | 40 / 56 |
+| 工具分布 | `search_code` 22 · `read_file` 22 · **`run_python` 4** | `read_file` 34 · `search_code` 18 · `list_files` 4 |
+| `apply_patch` / `run_tests` / `git_diff` | **0 / 0 / 0** | **0 / 0 / 0** |
+| patch | 0 字符 | 0 字符 |
+| 推理时长 | 77.5s | 144.9s |
+
+- **工具层不是瓶颈**：48 次调用里只有 1 次 `error` —— 轮 16 `search_code context=12` 越界
+  （`invalid_argument`），轮 17 自己改成 10 就过了。
+- **P2 相对 S5，工具种类上只有一处变化**：`list_files` 4 次换成 `run_python` 4 次；数量上 `read_file` 34→22、
+  `search_code` 18→22；编辑 / 测试 / diff 两跑都是 0。**§三「行为基本等同于 S5」这句站得住。**
+- 上下文从轮 1 的 2,630 涨到轮 40 的 19,748 prompt token，但**不是单调的：40 轮里 13 轮比上一轮少**，
+  降得最多的四次是轮 9（−2,109）· 31（−1,722）· 15（−1,651）· 21（−1,613）【原文·轨迹，`p2_11138.py ctx`】。
+  【判断】这是 C8 滑窗滚动的痕迹（见 11.4）：一条较早的长观察被压成一行，省下的比新进来的多。
+
+### 11.2 那 4 次 `run_python` 的全文【原文·轨迹】
+
+| 轮 | code | 结果 | 分类 |
+| --- | --- | --- | --- |
+| 8 | `import django` / `print(django.get_version())` | exit 0，22 字符输出 | TRIVIAL |
+| 27 | `subprocess.run(['git','log','--oneline','-5'], cwd='/testbed')` + `git status` | **exit 1**，410 字符 | ARCH |
+| 28 | 改 `check_output` 重来 `git log --oneline -5` | exit 0，374 字符 | ARCH |
+| 29 | `git show --stat HEAD` + `git show HEAD`（切 8000 字符） | exit 0，290 字符 | ARCH |
+
+**轮 30–40 这 11 轮再没调过 `run_python`。**
+
+⚠️ **这三次考古看到了什么，轨迹里查不到【未知】**：落盘的 `summary` 只有
+`Script finished with exit code 0 (374 chars of output)`；stdout 拼进的是 `content`，
+**模型读到了、`StepRecord` 没存**【原文 `agent/tools.py:1553-1573`、`agent/observation.py:87`】。
+所以「考古有没有找到答案」这一问，**这条轨迹回答不了**。
+
+### 11.3 定位早就完成了【推算，`p2_11138_gold_lines.py`】
+
+gold patch = **7 个 hunk / 4 个文件**。**4 个文件它全读到**，`read_file` 22 次里 17 次落在这 4 个上
+（mysql 5 · sqlite3/base 5 · sqlite3/ops 4 · oracle 3）。细到 hunk：
+
+| gold hunk（文件:行） | 被哪次 `read_file` **完整**读到（轮:起-止） |
+| --- | --- |
+| `mysql/operations.py` 69-76 | 轮 2 `1-110` · 轮 5 `1-200` · 轮 18 `38-97` |
+| `oracle/operations.py` 99-107 | 轮 2 `80-139` · 轮 7 `80-149` · 轮 15 `1-160` |
+| `sqlite3/operations.py` 84-110 | 轮 12 `1-120` |
+| `sqlite3/base.py` 398-411 | 轮 21 `395-444` |
+| `sqlite3/base.py` 473-480 | 轮 32 `444-513` |
+| `sqlite3/base.py` 443-464 | **无**（只有部分重叠：轮 21 · 31 · 32） |
+| `sqlite3/base.py` 195-204 | **无，连重叠都没有** —— 这一段它一次都没读过 |
+
+**7 个里 5 个完整进过上下文。** → **「40 轮 0 次 `apply_patch`」不能读成「没找到地方」。**
+
+### 11.4 本次自己提、又被自己数据否掉的假说：C8 滑窗装不下（留作记录，不静默删）
+
+**假说**：`loop.py:19 KEEP_FULL_OBSERVATIONS = 5`，`trim_messages` 只给**最近 5 条**观察留全文，
+更早的被压成 `[observation elided to save context] <summary 首行>`【原文 `agent/loop.py:310-329`】。
+→ 4 个 gold 文件的全文永远凑不齐 → 写不出 `apply_patch` 要的精确 `old_string`。
+
+- **文件级：否掉。** 轮 15 那一刻窗口里 4 个 gold 文件**全在**
+  （轮 11 mysql `70-129` · 轮 12 sqlite3/ops `1-120` · 轮 13 搜 sqlite3/base · 轮 14 sqlite3/base
+  `401-440` · 轮 15 oracle `1-160`）。**集齐过，且之后 25 轮没动手。**
+- **hunk 级：成立，但不构成阻塞。** 任一时刻窗口里同时留着全文的 gold hunk **峰值 2/7**（轮 2）。
+  但 **gold 回放本身是 7 次独立的 `apply_patch`**，一次只要当前那一段在手里 ——
+  所以「凑不齐」影响的是**通盘判断**，不是**能不能下第一刀**。【判断】**不能当病因。**
+- **「反复重读 = 失忆」也不成立**：完全相同的 `(tool, args)` 调用全跑只有 1 组 2 次
+  （`sqlite3/operations.py 195-254`，轮 19 与轮 34）。重读的是**不同行段**，不是同一段来回刷。
+
+### 11.5 `thought` 全空：一个看着像判别量、跨跑却不复现的量
+
+**本条 P2 48/48、S5 56/56 步 `thought` 全空**【原文·轨迹】——`thought` 存的是
+`reply.content`【原文 `agent/loop.py:514`】，即模型在工具调用之外写的话。两跑并排：
+
+| | P2 A 组（9） | P2 B 组（16） | S5 A 组（9） | S5 B 组（16） |
+| --- | --- | --- | --- | --- |
+| 有非空 `thought` 的实例 | **1/9（11%）** | **11/16（69%）** | 3/9（33%） | 9/16（56%） |
+
+P2 看着是个干净的判别量，**S5 就塌了**。两跑都全程 0 `thought` 的 8 条里，
+`django-11163` 与 `django-13512` **进过编辑阶段**（B 组）。
+→【判断】**「不说话」更像实例属性，不是结果的判别量。按 ⑨ 的教训，不得当验收线用。**
+
+### 11.6 最像的解释：prompt 第 3 条把「先复现」放成了动手的前置
+
+- **system prompt 第 3 条**【原文 `agent/loop.py:137-162`】：
+  *"Reproduce the reported behaviour with run_python before you change anything."*
+  —— `apply_patch` 是**第 4 条**。
+- **题面给的例子按字面复现不了**：problem statement 的例子全是 MySQL（全文 3,135 字符，mysql 出现 12 次），
+  `'ENGINE': 'django.db.backends.mysql'` + `OPTIONS.read_default_file` 指向 `.cnf`
+  【原文·数据集 `problem_statement`】；容器无网、无 MySQL 服务。⚠️ 这**不等于**「这条 issue 复现不了」，见限制 4。
+- **本条 REPRO = 0**（§三甲型），即从未跑过被测代码 ——
+  与「没拿到第 3 步的通行证，就没进第 4 步」一致【判断】。
+
+⚠️ **四重限制，不许把它写成结论**：
+
+1. **不必要**：`sympy-17630` REPRO 14/15（93%）仍从未动手（§三丙）。复现不了**不是**从未动手的必要条件。
+2. **无法证实**：48/48 步 `thought` 全空，模型一句话没写。**㉖ 加的 `reasoning_tokens` 正是查
+   「有没有在闷头想」的仪器，但这一跑早于 ㉖，三个字段在轨迹里根本不存在** —— 读数要等下一次真跑。
+3. **验证法明知不做**：把第 3 条改成「复现不了就说明理由、直接从代码改」再跑一次 ——
+   ㉕ 已证改 prompt 会让成本基线不可比，且⑦⑨ 的方差要重复跑才压得住。**不建议现在做。**
+4. **复现的路其实是通的**（09-19 收尾核对补上）：标题原文 *"…not used when making dates timezone-aware
+   on MySQL, SQLite, and Oracle."*（sqlite 全文出现 2 次）；gold 的 7 个 hunk 有 **5 个**改在 `sqlite3/` 两个文件上（11.3）；
+   **评分测试本身就用 SQLite 跑**：`./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1 timezones.tests`
+   【原文 `SWE-bench/logs/evaluation/s2-eval/gpt-5.6-luna/django__django-11138/eval.sh:116`，本地评测日志，`SWE-bench/` 不入库】。
+   SQLite 不要服务、不要网 → 准确说法是「**MySQL 例子**复现不了」，不是「这条 issue 复现不了」。
+   第 3 步的通行证**拿得到**，所以「环境把它卡在第 3 步」这版解释**更弱了**；剩下的是「它没想到换后端」——
+   同样因 `thought` 全空而【未知】。
+
+### 11.7 顺带：它读了 5 轮时区测试，评分用的那条容器里根本没有【原文·数据集 + 轨迹】
+
+- `FAIL_TO_PASS = ['test_query_convert_timezones (timezones.tests.NewDatabaseTests)']`
+- 这条测试由 `test_patch` **新增**（`+    def test_query_convert_timezones(self):`，
+  `test_patch` 只碰 `tests/timezones/tests.py`）→ **base checkout 里不存在，容器里找不到。**
+- 轨迹里有 5 轮（占 40 轮 12.5%）花在时区测试上：轮 24 在 `tests/` 搜
+  `CONVERT_TZ|FROM_TZ|_convert_field_to_tz|timezone_name`、轮 25/26 读 `tests/timezones/tests.py`、
+  轮 39 在该文件搜 `class ForcedTimeZoneDatabaseTests|class TimeZoneDatabaseTests|_set_connection_timezone|@skipUnlessDBFeature|@override_settings|databases =`、
+  **轮 40（最后一轮）又读它**【原文·轨迹，`p2_11138.py args 24 39`】。
+- **搜索词里没有评分测试的名字**（按 R2 它也看不到），所以**不能说它在「找那条测试」**。
+  【判断】轮 39 的搜索词更像在查「测试里怎么给数据库连接设 `TIME_ZONE`」—— 正是走 SQLite 复现要的东西
+  （11.6 限制 4），但到轮 40 也没写成脚本；`thought` 全空，意图无法证实。
+- 【判断】评分测试不在 base checkout 里是 SWE-bench 的构造（`test_patch` 评测时才打上），任何 agent 都读不到；
+  prompt 里 *"Your change is graded by tests you cannot see"* 已明说。
+
+### 11.8 对 §4.3 的一处口径收紧（不静默改）
+
+§4.3 表里「**A 组 8 条 ｜ 考古起止 轮 9~27 → 一直到轮 40**」这一行**对本条不成立**：
+它的考古在**轮 27–29**，之后 11 轮再没调过 `run_python`。
+因此在「末 10 轮（轮 31–40）非诊断占比」这个判别量上，**本条贡献 0 次调用** ——
+它在 A 组那 42 次里是**无数据**，不是「符合」。
+**结论方向不变**（它确实没回到诊断），但那一行对本条要读成「轮 29 之后再没用过 `run_python`」。
+
+**同一行对另外两条也不成立**（09-19 收尾核对补上）【原文 `p2_groupa.py profile` / `classify`】：
+`pylint-8898` 考古同样始于轮 27、末 10 轮 **0 次** `run_python`（与本条同形）；`sympy-17630` ARCH=0（§三 已写明）。
+按 §4.3 自己的量化口径（末 10 轮有非诊断调用），**那一行只对 8 条里的 5 条成立**。
+76%（32/42）不受影响 —— 它数的是调用，末 10 轮 0 次调用的实例本来就不进分子分母。
+
+### 11.9 面试可讲的事（接 ㉛）
+
+㉜ **「找不到地方」和「不敢下刀」是两种病，判别量不同且 $0 可算。**
+这条 40 轮 0 次 `apply_patch`，表面像定位失败；实际 gold 的 4 个文件全读到、7 个 hunk 完整读到 5 个。
+判别量是**「gold 文件 / hunk 有没有进过上下文」**——从已落盘轨迹 + gold 回放就能算，不用重跑、不花钱。
+讲法配套：我是**先把便宜的判别量算出来，才敢说它不是定位问题**。
+
+㉝ **我提的假说被我自己的数据否掉了一半。**
+「C8 的 5 条滑窗装不下 4 个文件」→ 文件级在轮 15 集齐过，**否**；hunk 级峰值 2/7，**成立但不阻塞**
+（gold 回放是 7 次独立 `apply_patch`）。留着这条记录，是因为它和 ⑬ 是同一件事的两面：
+**证据链完整 ≠ 因果链正确**，区别只在这次是**下结论前**就被自己的数据拦住了。
+
+### 11.10 复现
+
+```bash
+cd ~/swe-bench-eval
+
+# 11.1 基本盘 / 11.1 两跑对照
+python3 scripts/p2_11138.py head
+python3 scripts/p2_11138.py cmp
+
+# 11.2 四次 run_python 全文 · 逐轮表
+python3 scripts/p2_11138.py rpy
+python3 scripts/p2_11138.py rounds
+
+# 11.3 gold 文件覆盖（$0，只用已落盘轨迹）
+python3 scripts/p2_11138.py gold
+
+# 11.4 C8 滑窗占用 / 重复调用
+python3 scripts/p2_11138.py window
+python3 scripts/p2_11138.py repeat
+
+# 11.5 thought 统计（单条 / 全跑 / 按 A-B 组与 resolved）
+python3 scripts/p2_11138.py thoughts
+python3 scripts/p2_11138.py thoughtscan
+python3 scripts/p2_11138.py thoughtgroup
+
+# 11.3 hunk 行号 · 11.6 problem_statement 与后端名计数 · 11.7 test_patch（需要 datasets，走 .venv）
+PYTHONPATH=. .venv/bin/python scripts/p2_11138_gold_lines.py
+
+# 09-19 收尾核对补上：11.1 逐轮上下文 · 11.7 完整搜索词
+python3 scripts/p2_11138.py ctx
+python3 scripts/p2_11138.py args 24 39
+
+# 11.0 表乙组逐条 · 11.8 补充（末 10 轮构成）→ 即 §十 的这两条（$STILL 见 §十）
+python3 scripts/p2_groupa.py profile  results/inference/p2-mine
+python3 scripts/p2_groupa.py classify results/inference/p2-mine $STILL
+
+# 11.6 限制 4：评分命令用 SQLite（本地评测日志，SWE-bench/ 不入库）
+grep -n runtests SWE-bench/logs/evaluation/s2-eval/gpt-5.6-luna/django__django-11138/eval.sh
+```
+
+### 11.11 收尾核对时纠正的（09-19，不静默改）
+
+§十一 由 09-18 晚的一个会话写成，**当时没提交**。09-19 收尾时把 11.10 的命令全部重跑、逐项对数，改了六处：
+
+1. **11.9 编号撞号**：原标 ㉗㉘，与 §八 的 ㉗㉘ 重复（㉙㉚ 也在 §八，㉛ 已用于 09-18 ㉖ 修复的收工记录）→ 改 ㉜㉝。
+2. **11.0 表乙列**：原写「考古一路到轮 40」→ `pylint-8898` 末 10 轮 0 次 `run_python`，改为「6 条里 5 条」；
+   该行口径同时从「考古」改成 §4.3 的「非诊断（ARCH+BROWSE）」，因为逐条数据只分到这一层。11.8 同步补上它和 `sympy-17630`。
+3. **11.1 上下文回落**：原写「中途在轮 15、21 回落」→ 实际 13 轮回落，降幅最大的轮 9、轮 31 原文没列。
+4. **11.1「变化只有一处，其余形态不变」**：漏了 `search_code` 18→22 → 改为「种类上一处，数量上两处」。
+5. **11.6「这条 issue 按字面复现不了 / 通篇是 MySQL 场景」**：标题点名 MySQL、SQLite、Oracle 三个后端，
+   评分测试就用 SQLite 跑 → 收窄为「MySQL 例子复现不了」，加限制 4。**这处最要紧**：它削弱的正是 11.0 那句机制解释。
+   （`p2_11138_gold_lines.py` 原来只打印 problem statement 前 900 字符，现已加全文的后端名计数。）
+6. **11.7「它最后两轮在找的那条测试」**：把意图写成了事实 → 搜索词里没有评分测试的名字（它按 R2 也看不到），
+   标题改为「读了 5 轮时区测试」，意图降为【判断】。
+
+**其余逐项一致**：11.0 表的调用次数与 REPRO/ARCH、11.1 基本盘、11.2 四次调用、11.3 覆盖表（hunk 取的是旧文件行号，
+与 `read_file` 读的 base checkout 同侧）、11.4 窗口峰值与重复调用、11.5 `thought` 表与交集 8 条、11.7 的 5 轮、11.8 的 42 次；
+代码行号引用（`loop.py:19` `:137-162` `:310-329` `:514`、`tools.py:1553-1573`、`observation.py:87`）按 HEAD `6010258` 核过。
