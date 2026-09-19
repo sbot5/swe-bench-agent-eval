@@ -43,7 +43,8 @@ HF_DATASETS_OFFLINE=1 .venv/bin/python scripts/baseline_gold_strat.py
 **两边是同一个模型**【原文】：mini 的 `info.config.model.model_name = "openai/deepseek-flash"`；
 我方 25 条轨迹的 `returned_model` 全部是 `deepseek-flash`。
 
-**我方 scaffold 的工具面**【原文 `agent/tools.py`】：`read_file` · `list_files` · `search_code` ·
+**我方 scaffold 的工具面**【原文 `agent/tools.py` @ `3b2253b`，S5 时点；该文件已于 09-19 拆成
+`agent/tools/` 包，且 `run_python` 是 P2 才加的，所以这里仍是六个】：`read_file` · `list_files` · `search_code` ·
 `apply_patch` · `run_tests` · `git_diff`。**没有任意命令执行，没有网络通道。**
 
 ## 二 发现 1：baseline 的 21 条 resolved 全部与 gold patch 逐行相同

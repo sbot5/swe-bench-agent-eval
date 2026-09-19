@@ -226,7 +226,7 @@ WARNING: Retrying (Retry(total=4, ...)) after connection broken by
 1. **同一个动作、两条轨迹，一条看见了断网、一条没看见。** `sphinx-11510` 轮 13 也跑了
    `pip download sphinx==7.4.0`，但它只 `print(subprocess.run(...).stdout)` —— pip 的报错走 stderr，
    被它自己的 `capture_output=True` 吞掉，**观察里只有一个空行**。
-   `run_python` 本身是把 stderr 并进 stdout 的（`agent/tools.py:1529` 的 `2>&1`），**丢在模型自己的代码里**。
+   `run_python` 本身是把 stderr 并进 stdout 的（`agent/tools/run_python.py:104` 的 `2>&1`），**丢在模型自己的代码里**。
    → **断网的失败信号可以是静默的**（见 ㉚）。
 2. **看见了也没用。** `sphinx-9711` 在轮 15 明确读到 `[Errno -3]`，之后仍然 22 次 `run_python`
    用满 40 轮、从未动手。**「它要是知道没网就会改策略」不成立。**
@@ -285,7 +285,7 @@ print(django.VERSION)
 **能力给错用法是可以幸存的；出不来才是失败。** —— 这也直接指向一个比「再加工具」便宜得多的改法方向。
 
 **㉚ 断网的失败信号会被吞掉，而且吞在你管不着的地方。** `run_python` 把 stderr 并进了 stdout
-（`tools.py:1529`），但模型自己写 `subprocess.run(..., capture_output=True)` 再只 `print(.stdout)`，
+（`tools/run_python.py:104`），但模型自己写 `subprocess.run(..., capture_output=True)` 再只 `print(.stdout)`，
 pip 的 `[Errno -3]` 就没了 —— `sphinx-11510` 轮 13 拿到的是**一个空行**，
 而 `sphinx-9711` 轮 15 因为自己写了 `2>&1 | head -5` 就**看见了**。
 **同一个环境限制，模型能不能感知到，取决于它自己那两行代码。**
@@ -409,7 +409,7 @@ gold 要改的 4 个文件它全读到（22 次 `read_file` 里 17 次落在这 
 
 ⚠️ **这三次考古看到了什么，轨迹里查不到【未知】**：落盘的 `summary` 只有
 `Script finished with exit code 0 (374 chars of output)`；stdout 拼进的是 `content`，
-**模型读到了、`StepRecord` 没存**【原文 `agent/tools.py:1553-1573`、`agent/observation.py:87`】。
+**模型读到了、`StepRecord` 没存**【原文 `agent/tools/run_python.py:128-148`、`agent/observation.py:87`】。
 所以「考古有没有找到答案」这一问，**这条轨迹回答不了**。
 
 ### 11.3 定位早就完成了【推算，`p2_11138_gold_lines.py`】
@@ -584,4 +584,4 @@ grep -n runtests SWE-bench/logs/evaluation/s2-eval/gpt-5.6-luna/django__django-1
 
 **其余逐项一致**：11.0 表的调用次数与 REPRO/ARCH、11.1 基本盘、11.2 四次调用、11.3 覆盖表（hunk 取的是旧文件行号，
 与 `read_file` 读的 base checkout 同侧）、11.4 窗口峰值与重复调用、11.5 `thought` 表与交集 8 条、11.7 的 5 轮、11.8 的 42 次；
-代码行号引用（`loop.py:19` `:137-162` `:310-329` `:514`、`tools.py:1553-1573`、`observation.py:87`）按 HEAD `6010258` 核过。
+代码行号引用（`loop.py:19` `:137-162` `:310-329` `:514`、`tools.py:1553-1573`、`observation.py:87`）按 HEAD `6010258` 核过；09-19 `tools.py` 拆成 `tools/` 包后，这两处已平移为 `tools/run_python.py:104` 与 `:128-148`（逐行核过，内容一字未变）。

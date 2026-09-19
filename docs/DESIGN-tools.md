@@ -532,6 +532,12 @@ ERROR: -o/--override-ini expects option=value style.
 本工具「从 `eval_script` 抽运行器前缀、把 target 拼在命令末尾」的做法（`DESIGN-run.md` R2 的同一处设计）
 在 **pytest < 3.4 的实例上必然翻车**。S4 的 10 条里只有 astropy 这条是老 pytest，所以只翻了一条。
 
+> ⚠️ **09-19 拆包时核对：下面四个 `tools.py:NNNN` 对不上任何一个时点的代码，保留原样并记在这里（不静默改）。**
+> 写作当时的 `5b52309` 里 `1134` 是**修复后**的 `_PASSING_STATUSES` 定义，而本段展示的是修复**前**的 `_FAILING_STATUSES`
+> —— 行号与代码内容取自两个不同版本；`1262/1278/1299` 在该版里落在无意义的续行上，在拆包前的 HEAD（`1ce0dae`）里又与本段描述错位。
+> **代码位置以符号名为准**：白名单现在在 `agent/tools/run_tests.py:21`，用它做判定在同文件 `:151`。
+> 本段展示的 `_FAILING_STATUSES` 是 T10 修复前的代码，已不存在于任何 HEAD，只作事故现场保留。
+
 **错 2 —— 带冒号的 `ERROR:` 躲过了失败判定，失败被算成通过。**
 SWE-bench 官方的 astropy log parser 把上面那行 `ERROR: -o/--override-ini expects option=value style.`
 **当成一条测试记录**解析：按空格切，第一个 token `ERROR:`（**带冒号**）当状态，剩下当测试名。

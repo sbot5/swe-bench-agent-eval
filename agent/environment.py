@@ -1,6 +1,6 @@
 """每条实例一个 Docker 容器，工具通过 docker exec 在里面执行；Agent 代码本身跑在宿主机。
 
-这一层不做命令 allowlist / 路径白名单，拼进命令的参数由 tools.py 负责 shlex.quote（决定 23）。
+这一层不做命令 allowlist / 路径白名单，拼进命令的参数由 tools 包 负责 shlex.quote（决定 23）。
 容器事实、决定、实测、已纠正的错误：docs/DESIGN-environment.md
 残留容器：docker rm -f $(docker ps -aq --filter name=swebench-agent-)
 """
@@ -11,12 +11,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Final, Self
 
-# 容器内仓库根。execute() 的 -w 和 tools.py 的路径白名单共用，同一事实一个来源
+# 容器内仓库根。execute() 的 -w 和 tools 包 的路径白名单共用，同一事实一个来源
 REPO_ROOT: Final = "/testbed"
 
 @dataclass(frozen=True)
 class ExecResult:
-    """容器内一条命令的执行结果快照。只给 tools.py 看，由它加工成 Observation；模型看不到。
+    """容器内一条命令的执行结果快照。只给 tools 包 看，由它加工成 Observation；模型看不到。
 
     stdout / stderr 分开存、不截断；duration 单位秒（决定 1–7）。
     超时则 timed_out=True 且 exit_code 为 None，否则 exit_code 必为 int（__post_init__ 强制）。

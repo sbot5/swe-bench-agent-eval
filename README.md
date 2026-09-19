@@ -27,15 +27,15 @@
 **scaffold 四个模块全部完成**（各带设计档案）：
 [`observation.py`](agent/observation.py) 观察契约（[DESIGN](docs/DESIGN-observation.md)）·
 [`environment.py`](agent/environment.py) 执行层，行为验收 22/22（[DESIGN](docs/DESIGN-environment.md)）·
-[`tools.py`](agent/tools.py) 六个工具（[DESIGN](docs/DESIGN-tools.md)）·
+[`tools/`](agent/tools/) 七个工具，一工具一模块（[DESIGN](docs/DESIGN-tools.md)）·
 [`loop.py`](agent/loop.py) ReAct 循环（[DESIGN](docs/DESIGN-loop.md)）·
 [`run.py`](agent/run.py) 批量入口 · [`report.py`](agent/report.py) badcase 归因表（[DESIGN](docs/DESIGN-run.md)）。
-测试 110 条：`python -m pytest tests/ -q`（94 条假 env / 纯函数，2.4 秒）、加 `-m slow`（16 条真容器，5.4 秒）。
+测试 142 条：`python -m pytest tests/ -q`（121 条假 env / 纯函数，9.4 秒）、加 `-m slow`（21 条真容器，10.8 秒）。
 
 ### 整条链怎么在不花一分钱的情况下证明是对的
 
 把 25 条 gold patch 的每个 hunk 拆成一对 `(old_string, new_string)`，当成一个**假模型**喂给循环
-（[`tests/gold_replay.py`](tests/gold_replay.py)）—— 容器、六个工具、ReAct 消息协议、patch 提取、
+（[`tests/gold_replay.py`](tests/gold_replay.py)）—— 容器、七个工具、ReAct 消息协议、patch 提取、
 `preds.json` 格式、官方 harness 全部真跑，只有「模型该改哪里」这一件事被换成了已知答案。
 
 | 结果 | 值 |
@@ -241,7 +241,9 @@ collect.sh          把证据从 SWE-bench/logs 收进 results/
 agent/
   observation.py    所有工具的统一返回形状：状态、失败类别、渲染、截断
   environment.py    一条实例一个 Docker 容器，工具通过 docker exec 在里面执行
-  tools.py          六个工具：list_files search_code read_file apply_patch run_tests git_diff
+  tools/            七个工具，一工具一模块：read_file list_files search_code apply_patch
+                    run_tests git_diff run_python；_common.py 放常量与跨工具 helper，
+                    __init__.py 只做重导出不放逻辑
   loop.py           ReAct 循环：三个终止条件 + 上下文裁剪 + 异常路径。不认识 Docker，也不认识 SWE-bench
   model.py          litellm 客户端：重试与错误分类，把「可重试」和「没救了」分开
   run.py            批量入口：起容器、绑工具、提取 patch、落盘 preds.json
@@ -251,7 +253,7 @@ tests/
   fake_env.py           假执行环境，按脚本回 ExecResult，不起容器
   gold_replay.py        把 gold patch 拆成 apply_patch 调用，当假模型驱动整条链
   smoke_gold_replay.py  端到端冒烟的入口（$0）
-  test_*.py             110 条；真容器那 16 条打了 slow marker，默认跳过
+  test_*.py             142 条；真容器那 21 条打了 slow marker，默认跳过
 results/
   evaluation/<run_id>/results.json       评测结论
   evaluation/<run_id>/attribution.md     badcase 归因表（report.py 产出）
