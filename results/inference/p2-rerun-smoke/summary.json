@@ -1,0 +1,31 @@
+{
+  "run_id": "p2-rerun-smoke",
+  "model": "openai/deepseek-flash",
+  "config": {
+    "max_steps": 40,
+    "cost_limit": 0.5,
+    "wall_clock_limit": 1800.0,
+    "keep_full_observations": 5,
+    "max_consecutive_tool_errors": 5,
+    "max_file_edit_failures": 3,
+    "max_empty_replies": 2
+  },
+  "elapsed_seconds": 37.1,
+  "instances": [
+    {
+      "instance_id": "sphinx-doc__sphinx-9698",
+      "stop_reason": "finished",
+      "steps": 16,
+      "api_calls": 16,
+      "cost": 0.0,
+      "loop_seconds": 34.1,
+      "wall_seconds": 37.1,
+      "patch_chars": 624,
+      "tool_errors": 0,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    }
+  ]
+}

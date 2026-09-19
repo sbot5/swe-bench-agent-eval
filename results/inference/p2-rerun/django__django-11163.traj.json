@@ -1,0 +1,389 @@
+{
+  "instance_id": "django__django-11163",
+  "stop_reason": "finished",
+  "finish_reason": "Changed the field-selection condition in model_to_dict() from `if fields` to `if fields is not None` so that an explicitly empty fields list correctly yields an empty dict instead of all fields.",
+  "error": "",
+  "total_cost": 0.0,
+  "total_duration": 15.31503885799998,
+  "api_calls": 10,
+  "model_patch": "diff --git a/django/forms/models.py b/django/forms/models.py\nindex d157c291ef..5edbbd376f 100644\n--- a/django/forms/models.py\n+++ b/django/forms/models.py\n@@ -83,7 +83,7 @@ def model_to_dict(instance, fields=None, exclude=None):\n     for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):\n         if not getattr(f, 'editable', False):\n             continue\n-        if fields and f.name not in fields:\n+        if fields is not None and f.name not in fields:\n             continue\n         if exclude and f.name in exclude:\n             continue\n",
+  "steps": [
+    {
+      "index": 1,
+      "thought": "",
+      "tool_name": "search_code",
+      "tool_args": {
+        "pattern": "def model_to_dict"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "1 matches for 'def model_to_dict' under '.' in 1 files",
+      "duration": 1.627669707999985,
+      "cost": 0.0,
+      "prompt_tokens": 1766,
+      "completion_tokens": 47,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1536,
+      "cache_miss_tokens": 230,
+      "reasoning_tokens": 6
+    },
+    {
+      "index": 2,
+      "thought": "",
+      "tool_name": "read_file",
+      "tool_args": {
+        "path": "django/forms/models.py",
+        "offset": 67,
+        "limit": 30
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Lines 67-96 of 'django/forms/models.py' (1358 lines in total)",
+      "duration": 1.5185869519999642,
+      "cost": 0.0,
+      "prompt_tokens": 1949,
+      "completion_tokens": 75,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1792,
+      "cache_miss_tokens": 157,
+      "reasoning_tokens": 0
+    },
+    {
+      "index": 3,
+      "thought": "",
+      "tool_name": "run_python",
+      "tool_args": {
+        "code": "import django\nfrom django.conf import settings\nsettings.configure(INSTALLED_APPS=['django.contrib.contenttypes','django.contrib.auth'], DATABASES={})\ndjango.setup()\nfrom django.contrib.auth.models import User\nfrom django.forms.models import model_to_dict\nu = User(username='x', first_name='a')\nprint(model_to_dict(u, fields=[]))\n"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Script finished with exit code 0 (280 chars of output)",
+      "duration": 1.7350074500000119,
+      "cost": 0.0,
+      "prompt_tokens": 2427,
+      "completion_tokens": 125,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1920,
+      "cache_miss_tokens": 507,
+      "reasoning_tokens": 7
+    },
+    {
+      "index": 4,
+      "thought": "",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "django/forms/models.py",
+        "old_string": "        if fields and f.name not in fields:",
+        "new_string": "        if fields is not None and f.name not in fields:"
+      },
+      "status": "error",
+      "failure_category": "anchor_ambiguous",
+      "summary": "old_string appears 2 times in 'django/forms/models.py'; it has to be unique",
+      "duration": 1.390870513999971,
+      "cost": 0.0,
+      "prompt_tokens": 2786,
+      "completion_tokens": 147,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 2432,
+      "cache_miss_tokens": 354,
+      "reasoning_tokens": 50
+    },
+    {
+      "index": 5,
+      "thought": "",
+      "tool_name": "read_file",
+      "tool_args": {
+        "limit": 20,
+        "offset": 425,
+        "path": "django/forms/models.py"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Lines 425-444 of 'django/forms/models.py' (1358 lines in total)",
+      "duration": 1.011289627999986,
+      "cost": 0.0,
+      "prompt_tokens": 3086,
+      "completion_tokens": 89,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 2816,
+      "cache_miss_tokens": 270,
+      "reasoning_tokens": 14
+    },
+    {
+      "index": 6,
+      "thought": "",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "django/forms/models.py",
+        "old_string": "        if not getattr(f, 'editable', False):\n            continue\n        if fields and f.name not in fields:",
+        "new_string": "        if not getattr(f, 'editable', False):\n            continue\n        if fields is not None and f.name not in fields:"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Edited 'django/forms/models.py': replaced 3 line(s) at line 84-86 with 3 line(s)",
+      "duration": 2.1580543490000537,
+      "cost": 0.0,
+      "prompt_tokens": 3482,
+      "completion_tokens": 396,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 3072,
+      "cache_miss_tokens": 410,
+      "reasoning_tokens": 267
+    },
+    {
+      "index": 7,
+      "thought": "",
+      "tool_name": "run_python",
+      "tool_args": {
+        "code": "import django\nfrom django.conf import settings\nsettings.configure(INSTALLED_APPS=['django.contrib.contenttypes','django.contrib.auth'], DATABASES={})\ndjango.setup()\nfrom django.contrib.auth.models import User\nfrom django.forms.models import model_to_dict\nu = User(username='x', first_name='a')\nprint(model_to_dict(u, fields=[]))\nprint(sorted(model_to_dict(u)) != [])\n"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Script finished with exit code 0 (8 chars of output)",
+      "duration": 1.6224257559999842,
+      "cost": 0.0,
+      "prompt_tokens": 3952,
+      "completion_tokens": 128,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1792,
+      "cache_miss_tokens": 2160,
+      "reasoning_tokens": 0
+    },
+    {
+      "index": 8,
+      "thought": "",
+      "tool_name": "run_tests",
+      "tool_args": {
+        "target": "model_forms.tests"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "All 142 test(s) passed (142 passed)",
+      "duration": 1.6142401869999503,
+      "cost": 0.0,
+      "prompt_tokens": 3854,
+      "completion_tokens": 43,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1792,
+      "cache_miss_tokens": 2062,
+      "reasoning_tokens": 0
+    },
+    {
+      "index": 9,
+      "thought": "",
+      "tool_name": "git_diff",
+      "tool_args": {},
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Changes so far under '.': 1 file changed, 1 insertion(+), 1 deletion(-)",
+      "duration": 1.3530084569999872,
+      "cost": 0.0,
+      "prompt_tokens": 6388,
+      "completion_tokens": 22,
+      "returned_model": "deepseek-flash",
+      "cache_hit_tokens": 1920,
+      "cache_miss_tokens": 4468,
+      "reasoning_tokens": 0
+    }
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing one issue in a Python repository that is already checked out at /testbed.\n\nYou work only through the tools listed below. The container has no network access: nothing can be\ndownloaded, fetched or cloned, so every answer has to come from the code in front of you.\nEvery tool answers with <summary>, sometimes <content>, and <next_actions>. When a tool reports an error,\nread its <next_actions> before trying anything else — they tell you both what to retry and when to stop.\n\nHow to work:\n1. Find the code the issue is about, with search_code and list_files.\n2. read_file the relevant code before editing it. Never edit text you have not read in this session.\n3. Reproduce the reported behaviour with run_python before you change anything. Reading code tells you what\n   it should do; running it tells you what it does. Keep that script — you will rerun it to check your fix.\n4. Make the smallest change that fixes the reported behaviour, with apply_patch.\n5. Rerun your run_python script to confirm the behaviour changed, then run the tests that cover the code\n   you edited, with run_tests.\n6. Call git_diff to check you changed only what you meant to, then call finish.\n\nRules that matter for how your work is graded:\n- Change repository files with apply_patch, not with run_python. apply_patch checks that the text you are\n  replacing is really there; a script that rewrites a file silently does the wrong thing when it is wrong.\n- Do not modify or add tests. Your change is graded by tests you cannot see.\n- Do not undo your change before finishing; an empty diff scores zero.\n- Fix the cause described in the issue, not just the one example in it.\n- If three edits to the same file fail in a row, stop editing that file and re-read it instead.\n"
+    },
+    {
+      "role": "user",
+      "content": "<issue>\nmodel_to_dict() should return an empty dict for an empty list of fields.\nDescription\n\t\nBeen called as model_to_dict(instance, fields=[]) function should return empty dict, because no fields were requested. But it returns all fields\nThe problem point is\nif fields and f.name not in fields:\nwhich should be\nif fields is not None and f.name not in fields:\nPR: ​https://github.com/django/django/pull/11150/files\n\n</issue>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_LaUmnpDTpOaYFCjVt9IZ4239",
+          "type": "function",
+          "function": {
+            "name": "search_code",
+            "arguments": "{\"pattern\": \"def model_to_dict\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_LaUmnpDTpOaYFCjVt9IZ4239",
+      "content": "<summary>\n1 matches for 'def model_to_dict' under '.' in 1 files\n</summary>\n<content>\ndjango/forms/models.py\n    67- # ModelForms #################################################################\n    68- \n    69: def model_to_dict(instance, fields=None, exclude=None):\n    70-     \"\"\"\n    71-     Return a dict containing the data in ``instance`` suitable for passing as\n</content>\n<next_actions>\n- To see more of a match, call read_file with its path and an offset a few lines before its line number.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_ET_81XoCFwzPYjxKtabmfw02487",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"django/forms/models.py\", \"offset\": 67, \"limit\": 30}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_ET_81XoCFwzPYjxKtabmfw02487",
+      "content": "<summary>\nLines 67-96 of 'django/forms/models.py' (1358 lines in total)\n</summary>\n<content>\n    67\t# ModelForms #################################################################\n    68\t\n    69\tdef model_to_dict(instance, fields=None, exclude=None):\n    70\t    \"\"\"\n    71\t    Return a dict containing the data in ``instance`` suitable for passing as\n    72\t    a Form's ``initial`` keyword argument.\n    73\t\n    74\t    ``fields`` is an optional list of field names. If provided, return only the\n    75\t    named.\n    76\t\n    77\t    ``exclude`` is an optional list of field names. If provided, exclude the\n    78\t    named from the returned dict, even if they are listed in the ``fields``\n    79\t    argument.\n    80\t    \"\"\"\n    81\t    opts = instance._meta\n    82\t    data = {}\n    83\t    for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):\n    84\t        if not getattr(f, 'editable', False):\n    85\t            continue\n    86\t        if fields and f.name not in fields:\n    87\t            continue\n    88\t        if exclude and f.name in exclude:\n    89\t            continue\n    90\t        data[f.name] = f.value_from_object(instance)\n    91\t    return data\n    92\t\n    93\t\n    94\tdef apply_limit_choices_to_to_formfield(formfield):\n    95\t    \"\"\"Apply limit_choices_to to the formfield's queryset if needed.\"\"\"\n    96\t    if hasattr(formfield, 'queryset') and hasattr(formfield, 'get_limit_choices_to'):\n</content>\n<next_actions>\n- To continue, call read_file with path='django/forms/models.py', offset=97, limit=30.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_92xPceXYMweTqEXtoAYh4898",
+          "type": "function",
+          "function": {
+            "name": "run_python",
+            "arguments": "{\"code\": \"import django\\nfrom django.conf import settings\\nsettings.configure(INSTALLED_APPS=['django.contrib.contenttypes','django.contrib.auth'], DATABASES={})\\ndjango.setup()\\nfrom django.contrib.auth.models import User\\nfrom django.forms.models import model_to_dict\\nu = User(username='x', first_name='a')\\nprint(model_to_dict(u, fields=[]))\\n\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_92xPceXYMweTqEXtoAYh4898",
+      "content": "<summary>\nScript finished with exit code 0 (280 chars of output)\n</summary>\n<content>\nCurrent args: code: 'import django\\nfrom django.conf import settings\\nsettings.conf'... (329 chars in total), timeout: 60, script written to /tmp/agent_run_python.py\n\n{'id': None, 'password': '', 'last_login': None, 'is_superuser': False, 'username': 'x', 'first_name': 'a', 'last_name': '', 'email': '', 'is_staff': False, 'is_active': True, 'date_joined': datetime.datetime(2026, 9, 19, 2, 58, 12, 601004), 'groups': [], 'user_permissions': []}\n\n</content>\n<next_actions>\n- Read the output above: it is evidence about how the code behaves now, not proof that the issue is fixed.\n- If this reproduces the issue, fix the cause with apply_patch and run the same script again to compare.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_Lv9U8jucAQh3UjjXmCdJ4591",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"django/forms/models.py\", \"old_string\": \"        if fields and f.name not in fields:\", \"new_string\": \"        if fields is not None and f.name not in fields:\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_Lv9U8jucAQh3UjjXmCdJ4591",
+      "content": "<summary>\nold_string appears 2 times in 'django/forms/models.py'; it has to be unique\n</summary>\n<content>\nFirst line of each occurrence:\n    86\t        if fields and f.name not in fields:\n   434\t            if fields and f.name not in fields:\n</content>\n<next_actions>\n- Extend old_string with the surrounding lines (e.g. the enclosing def or class line) until it matches exactly one of the places above, then retry.\n- If three edits to 'django/forms/models.py' fail in a row, stop editing this file; apply_patch never edits more than one occurrence at a time.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_RnU96lbQRF3fhtmb74hM3703",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"limit\": 20, \"offset\": 425, \"path\": \"django/forms/models.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_RnU96lbQRF3fhtmb74hM3703",
+      "content": "<summary>\nLines 425-444 of 'django/forms/models.py' (1358 lines in total)\n</summary>\n<content>\n   425\t        exclude = self._meta.exclude\n   426\t        fields = self._meta.fields\n   427\t        opts = self.instance._meta\n   428\t        # Note that for historical reasons we want to include also\n   429\t        # private_fields here. (GenericRelation was previously a fake\n   430\t        # m2m field).\n   431\t        for f in chain(opts.many_to_many, opts.private_fields):\n   432\t            if not hasattr(f, 'save_form_data'):\n   433\t                continue\n   434\t            if fields and f.name not in fields:\n   435\t                continue\n   436\t            if exclude and f.name in exclude:\n   437\t                continue\n   438\t            if f.name in cleaned_data:\n   439\t                f.save_form_data(self.instance, cleaned_data[f.name])\n   440\t\n   441\t    def save(self, commit=True):\n   442\t        \"\"\"\n   443\t        Save this form's self.instance object if commit=True. Otherwise, add\n   444\t        a save_m2m() method to the form which can be called after the instance\n</content>\n<next_actions>\n- To continue, call read_file with path='django/forms/models.py', offset=445, limit=20.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_0ZIPE5gHItBfBD0Z9T3F7181",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"django/forms/models.py\", \"old_string\": \"        if not getattr(f, 'editable', False):\\n            continue\\n        if fields and f.name not in fields:\", \"new_string\": \"        if not getattr(f, 'editable', False):\\n            continue\\n        if fields is not None and f.name not in fields:\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_0ZIPE5gHItBfBD0Z9T3F7181",
+      "content": "<summary>\nEdited 'django/forms/models.py': replaced 3 line(s) at line 84-86 with 3 line(s)\n</summary>\n<content>\n    81\t    opts = instance._meta\n    82\t    data = {}\n    83\t    for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):\n    84\t        if not getattr(f, 'editable', False):\n    85\t            continue\n    86\t        if fields is not None and f.name not in fields:\n    87\t            continue\n    88\t        if exclude and f.name in exclude:\n    89\t            continue\n</content>\n<next_actions>\n- Call run_tests to check the edit, or git_diff to review everything changed so far.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_ET_wGYS12QpxesjfYftPBgW7223",
+          "type": "function",
+          "function": {
+            "name": "run_python",
+            "arguments": "{\"code\": \"import django\\nfrom django.conf import settings\\nsettings.configure(INSTALLED_APPS=['django.contrib.contenttypes','django.contrib.auth'], DATABASES={})\\ndjango.setup()\\nfrom django.contrib.auth.models import User\\nfrom django.forms.models import model_to_dict\\nu = User(username='x', first_name='a')\\nprint(model_to_dict(u, fields=[]))\\nprint(sorted(model_to_dict(u)) != [])\\n\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_ET_wGYS12QpxesjfYftPBgW7223",
+      "content": "<summary>\nScript finished with exit code 0 (8 chars of output)\n</summary>\n<content>\nCurrent args: code: 'import django\\nfrom django.conf import settings\\nsettings.conf'... (367 chars in total), timeout: 60, script written to /tmp/agent_run_python.py\n\n{}\nTrue\n\n</content>\n<next_actions>\n- Read the output above: it is evidence about how the code behaves now, not proof that the issue is fixed.\n- If this reproduces the issue, fix the cause with apply_patch and run the same script again to compare.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_ET_Ca4AsH2d3ZAaqlpnaknd7291",
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "arguments": "{\"target\": \"model_forms.tests\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_ET_Ca4AsH2d3ZAaqlpnaknd7291",
+      "content": "<summary>\nAll 142 test(s) passed (142 passed)\n</summary>\n<content>\nCurrent args: target: 'model_forms.tests', test_command: './tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1', timeout: 300, command: './tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1 model_forms.tests'\n\n[TRUNCATED: dropped the first 5087 chars / 65 lines of output; the tail is kept because failures and the summary are printed last]\n\n.. ok\ntest_base_form (model_forms.tests.ModelFormBasicTests) ... ok\ntest_basic_creation (model_forms.tests.ModelFormBasicTests) ... ok\ntest_custom_form_fields (model_forms.tests.ModelFormBasicTests) ... ok\ntest_initial_values (model_forms.tests.ModelFormBasicTests) ... ok\ntest_m2m_editing (model_forms.tests.ModelFormBasicTests) ... ok\ntest_m2m_initial_callable (model_forms.tests.ModelFormBasicTests) ... ok\ntest_multi_fields (model_forms.tests.ModelFormBasicTests) ... ok\ntest_recleaning_model_form_instance (model_forms.tests.ModelFormBasicTests) ... ok\ntest_runtime_choicefield_populated (model_forms.tests.ModelFormBasicTests) ... ok\ntest_save_commit_false (model_forms.tests.ModelFormBasicTests) ... ok\ntest_save_with_data_errors (model_forms.tests.ModelFormBasicTests) ... ok\ntest_subset_fields (model_forms.tests.ModelFormBasicTests) ... ok\ntest_clean_does_deduplicate_values (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_field (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_field_22745 (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_number_of_queries (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_required_false (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_run_validators (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_model_multiple_choice_show_hidden_initial (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_show_hidden_initial_changed_queries_efficiently (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_to_field_name_with_initial_data (model_forms.tests.ModelMultipleChoiceFieldTests) ... ok\ntest_assignment_of_none (model_forms.tests.ModelOneToOneFieldTests) ... ok\ntest_assignment_of_none_null_false (model_forms.tests.ModelOneToOneFieldTests) ... ok\ntest_modelform_onetoonefield (model_forms.tests.ModelOneToOneFieldTests) ... ok\ntest_modelform_subclassed_model (model_forms.tests.ModelOneToOneFieldTests) ... ok\ntest_onetoonefield (model_forms.tests.ModelOneToOneFieldTests) ... ok\ntest_many_to_many (model_forms.tests.ModelToDictTests)\nData for a ManyToManyField is a list rather than a lazy QuerySet. ... ok\ntest_callable_field_default (model_forms.tests.OtherModelFormTests) ... ok\ntest_choices_type (model_forms.tests.OtherModelFormTests) ... ok\ntest_foreignkeys_which_use_to_field (model_forms.tests.OtherModelFormTests) ... ok\ntest_iterable_model_m2m (model_forms.tests.OtherModelFormTests) ... ok\ntest_media_on_modelform (model_forms.tests.OtherModelFormTests) ... ok\ntest_model_field_that_returns_none_to_exclude_itself_with_explicit_fields (model_forms.tests.OtherModelFormTests) ... ok\ntest_prefetch_related_queryset (model_forms.tests.OtherModelFormTests) ... ok\ntest_abstract_inherited_unique (model_forms.tests.UniqueTest) ... ok\ntest_abstract_inherited_unique_together (model_forms.tests.UniqueTest) ... ok\ntest_explicitpk_unique (model_forms.tests.UniqueTest)\nEnsure keys and blank character strings are tested for uniqueness. ... ok\ntest_explicitpk_unspecified (model_forms.tests.UniqueTest)\nTest for primary_key being in the form and failing validation. ... ok\ntest_inherited_unique (model_forms.tests.UniqueTest) ... ok\ntest_inherited_unique_for_date (model_forms.tests.UniqueTest) ... ok\ntest_inherited_unique_together (model_forms.tests.UniqueTest) ... ok\ntest_multiple_field_unique_together (model_forms.tests.UniqueTest) ... ok\ntest_override_unique_for_date_message (model_forms.tests.UniqueTest) ... ok\ntest_override_unique_message (model_forms.tests.UniqueTest) ... ok\ntest_override_unique_together_message (model_forms.tests.UniqueTest) ... ok\ntest_simple_unique (model_forms.tests.UniqueTest) ... ok\ntest_unique_for_date (model_forms.tests.UniqueTest) ... ok\ntest_unique_for_date_in_exclude (model_forms.tests.UniqueTest) ... ok\ntest_unique_for_date_with_nullable_date (model_forms.tests.UniqueTest) ... ok\ntest_unique_null (model_forms.tests.UniqueTest) ... ok\ntest_unique_together (model_forms.tests.UniqueTest)\nModelForm test of unique_together constraint ... ok\ntest_unique_together_exclusion (model_forms.tests.UniqueTest) ... ok\ntest_modelform_factory_metaclass (model_forms.tests.CustomMetaclassTestCase) ... ok\ntest_bad_callback (model_forms.tests.FormFieldCallbackTests) ... ok\ntest_baseform_with_widgets_in_meta (model_forms.tests.FormFieldCallbackTests)\nRegression for #13095: Using base forms with widgets defined in Meta should not raise errors. ... ok\ntest_custom_callback (model_forms.tests.FormFieldCallbackTests)\nA custom formfield_c\n\n[TRUNCATED: omitted 132 chars / 3 lines; kept 5000 chars from head and 5000 chars from tail]\n\n5: modelform_factory should accept widgets ... ok\ntest_inherit_after_custom_callback (model_forms.tests.FormFieldCallbackTests) ... ok\ntest_modelform_factory_with_all_fields (model_forms.tests.FormFieldCallbackTests)\nRegression for #19733 ... ok\ntest_modelform_factory_without_fields (model_forms.tests.FormFieldCallbackTests)\nRegression for #19733 ... ok\ntest_custom_error_messages (model_forms.tests.ModelFormCustomErrorTests) ... ok\ntest_model_clean_error_messages (model_forms.tests.ModelFormCustomErrorTests) ... ok\ntest_field_removal (model_forms.tests.ModelFormInheritanceTests) ... ok\ntest_field_removal_name_clashes (model_forms.tests.ModelFormInheritanceTests) ... ok\ntest_form_subclass_inheritance (model_forms.tests.ModelFormInheritanceTests) ... ok\ntest_big_integer_field (model_forms.tests.ModelOtherFieldTests) ... ok\ntest_http_prefixing (model_forms.tests.ModelOtherFieldTests) ... ok\ntest_modelform_non_editable_field (model_forms.tests.ModelOtherFieldTests) ... ok\ntest_url_on_modelform (model_forms.tests.ModelOtherFieldTests)\nCheck basic URL field validation on model forms ... ok\ntest_setattr_raises_validation_error_field_specific (model_forms.tests.StrictAssignmentTests) ... ok\ntest_setattr_raises_validation_error_non_field (model_forms.tests.StrictAssignmentTests) ... ok\ntest_error_messages_overrides (model_forms.tests.TestFieldOverridesByFormMeta) ... ok\ntest_field_type_overrides (model_forms.tests.TestFieldOverridesByFormMeta) ... ok\ntest_help_text_overrides (model_forms.tests.TestFieldOverridesByFormMeta) ... ok\ntest_label_overrides (model_forms.tests.TestFieldOverridesByFormMeta) ... ok\ntest_widget_overrides (model_forms.tests.TestFieldOverridesByFormMeta) ... ok\ntest_notrequired_overrides_notblank (model_forms.tests.ValidationTest) ... ok\ntest_validates_with_replaced_field_excluded (model_forms.tests.ValidationTest) ... ok\ntest_validates_with_replaced_field_not_specified (model_forms.tests.ValidationTest) ... ok\n\n----------------------------------------------------------------------\nRan 143 tests in 0.213s\n\nOK\nDestroying test database for alias 'default' ('file:memorydb_default?mode=memory&cache=shared')...\nTesting against Django installed in '/testbed/django'\nImporting application model_forms\nSkipping setup of unused database(s): other.\nOperations to perform:\n  Synchronize unmigrated apps: auth, contenttypes, messages, model_forms, sessions, staticfiles\n  Apply all migrations: admin, sites\nSynchronizing apps without migrations:\n  Creating tables...\n    Creating table django_content_type\n    Creating table auth_permission\n    Creating table auth_group\n    Creating table auth_user\n    Creating table django_session\n    Creating table model_forms_person\n    Creating table model_forms_category\n    Creating table model_forms_writer\n    Creating table model_forms_article\n    Creating table model_forms_improvedarticle\n    Creating table model_forms_improvedarticlewithparentlink\n    Creating table model_forms_betterwriter\n    Creating table model_forms_publication\n    Creating table model_forms_publicationdefaults\n    Creating table model_forms_author\n    Creating table model_forms_author1\n    Creating table model_forms_writerprofile\n    Creating table model_forms_document\n    Creating table model_forms_textfile\n    Creating table model_forms_customff\n    Creating table model_forms_filepathmodel\n    Creating table model_forms_imagefile\n    Creating table model_forms_optionalimagefile\n    Creating table model_forms_noextensionimagefile\n    Creating table model_forms_homepage\n    Creating table model_forms_product\n    Creating table model_forms_price\n    Creating table model_forms_triple\n    Creating table model_forms_articlestatus\n    Creating table model_forms_inventory\n    Creating table model_forms_book\n    Creating table model_forms_derivedbook\n    Creating table model_forms_explicitpk\n    Creating table model_forms_post\n    Creating table model_forms_datetimepost\n    Creating table model_forms_derivedpost\n    Creating table model_forms_bigint\n    Creating table model_forms_customfieldforexclusionmodel\n    Creating table model_forms_flexibledatepost\n    Creating table model_forms_colour\n    Creating table model_forms_colourfulitem\n    Creating table model_forms_customerrormessage\n    Creating table model_forms_character\n    Creating table model_forms_stumpjoke\n    Creating table model_forms_student\n    Creating table model_forms_photo\n    Creating table model_forms_uuidpk\n    Creating table model_forms_strictassignmentfieldspecific\n    Creating table model_forms_strictassignmentall\n    Creating table model_forms_award\n    Creating table model_forms_nullableuniquecharfieldmodel\n    Running deferred SQL...\nRunning migrations:\n  Applying admin.0001_initial... OK\n  Applying admin.0002_logentry_remove_auto_add... OK\n  Applying admin.0003_logentry_add_action_flag_choices... OK\n  Applying sites.0001_initial... OK\n  Applying sites.0002_alter_domain_unique... OK\nSystem check identified no issues (0 silenced).\n\n</content>\n<next_actions>\n- Call git_diff to review every change you made, then finish if the change is complete.\n- Passing a narrow target does not mean nothing else broke: run the tests near the code you edited before finishing.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_00_ET_ztSU6VzOMlIPFAaVB4xO5376",
+          "type": "function",
+          "function": {
+            "name": "git_diff",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_ET_ztSU6VzOMlIPFAaVB4xO5376",
+      "content": "<summary>\nChanges so far under '.': 1 file changed, 1 insertion(+), 1 deletion(-)\n</summary>\n<content>\ndjango/forms/models.py | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n\ndiff --git a/django/forms/models.py b/django/forms/models.py\nindex d157c291ef..5edbbd376f 100644\n--- a/django/forms/models.py\n+++ b/django/forms/models.py\n@@ -83,7 +83,7 @@ def model_to_dict(instance, fields=None, exclude=None):\n     for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):\n         if not getattr(f, 'editable', False):\n             continue\n-        if fields and f.name not in fields:\n+        if fields is not None and f.name not in fields:\n             continue\n         if exclude and f.name in exclude:\n             continue\n\n</content>\n<next_actions>\n- If anything above is not needed to fix the issue, revert that part with apply_patch before finishing.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "The fix is complete and minimal.\n\n`model_to_dict(instance, fields=[])` now returns `{}` because the check uses `fields is not None` instead of the truthiness check `if fields`, so an explicitly empty list is treated as \"no fields requested\" rather than \"all fields\". The full `model_forms` test suite passes (142 tests).",
+      "tool_calls": [
+        {
+          "id": "call_00_ET_e7GvQvvWX9uzrhk75pYb3517",
+          "type": "function",
+          "function": {
+            "name": "finish",
+            "arguments": "{\"reason\": \"Changed the field-selection condition in model_to_dict() from `if fields` to `if fields is not None` so that an explicitly empty fields list correctly yields an empty dict instead of all fields.\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_ET_e7GvQvvWX9uzrhk75pYb3517",
+      "content": "<summary>\nStopping here.\n</summary>"
+    }
+  ]
+}
