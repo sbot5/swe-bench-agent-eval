@@ -66,6 +66,9 @@ class ModelReply:
 
     后三个缓存/推理读数默认 **None 而不是 0**：None = 供应商这次没给这个字段（仪器没读到），
     0 = 真的一次都没命中。混成 0 就是 `cost=$0.0000` 那个坑的翻版 —— 假读数和真读数长得一样（决定 C20）。
+
+    reasoning_content 同口径：**None = 没给，"" = 给了但是空的**。它和 content 是两回事 ——
+    带 tool_calls 的那些轮 content 往往是空串，推理全在 reasoning_content 里（决定 C21）。
     """
 
     content: str
@@ -77,6 +80,7 @@ class ModelReply:
     cache_hit_tokens: int | None = None
     cache_miss_tokens: int | None = None
     reasoning_tokens: int | None = None
+    reasoning_content: str | None = None
 
 
 class ModelClient(Protocol):
@@ -105,6 +109,8 @@ class StepRecord:
     cache_hit_tokens: int | None = None
     cache_miss_tokens: int | None = None
     reasoning_tokens: int | None = None
+    # thought 那一列是 reply.content，带 tool_calls 时经常是空串；真正的推理在这里（决定 C21）
+    reasoning_content: str | None = None
 
 
 @dataclass
@@ -527,6 +533,7 @@ def run_episode(
                 cache_hit_tokens=reply.cache_hit_tokens,
                 cache_miss_tokens=reply.cache_miss_tokens,
                 reasoning_tokens=reply.reasoning_tokens,
+                reasoning_content=reply.reasoning_content,
             ))
 
             # 5. 异常路径：连着错到阈值就停，而不是重试到死（决定 C10）

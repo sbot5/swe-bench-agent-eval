@@ -88,6 +88,17 @@ def _first_int(*values) -> int | None:
     return None
 
 
+def _first_str(*values) -> str | None:
+    """取第一个真是字符串的读数；一个都没有就是 None —— 口径同 _first_int（决定 C21）。
+
+    空串是**真读数**（模型这一轮没产出推理文本），会原样返回，不会被当成「没给」。
+    """
+    for value in values:
+        if isinstance(value, str):
+            return value
+    return None
+
+
 def _to_reply(response) -> ModelReply:
     """把 litellm 的响应对象收敛成 ModelReply。算不出成本时记 0 并继续，不为了一个读数中断实例。"""
     message = response.choices[0].message
@@ -116,4 +127,9 @@ def _to_reply(response) -> ModelReply:
                                     getattr(usage, "prompt_cache_hit_tokens", None)),
         cache_miss_tokens=_first_int(getattr(usage, "prompt_cache_miss_tokens", None)),
         reasoning_tokens=_first_int(getattr(completion_details, "reasoning_tokens", None)),
+        # 「为什么不动手」的答案只可能在这里：thought（= message.content）在带 tool_calls 的轮
+        # 经常是空串，而模型 38/40 轮都在推理（EVAL-P2-rerun.md）。litellm 在没有推理时
+        # **del 掉这个属性**（types/utils.py Message.__init__），所以 getattr 必须自带默认值，
+        # 读到 None 就是「供应商没给」—— 不许拿 "" 冒充（决定 C21）。
+        reasoning_content=_first_str(getattr(message, "reasoning_content", None)),
     )

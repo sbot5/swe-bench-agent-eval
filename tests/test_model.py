@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from litellm.types.utils import ModelResponse
 from litellm.utils import convert_to_model_response_object
 
-from agent.model import _first_int, _to_reply
+from agent.model import _first_int, _first_str, _to_reply
 
 # DeepSeek 实际返回的 usage 形状【原文 scripts/p2_cache_probe.py 的 09-18 实测输出】
 DEEPSEEK_USAGE = {
@@ -22,15 +22,18 @@ DEEPSEEK_USAGE = {
 }
 
 
-def response_from(usage: dict | None, model: str = "deepseek-flash"):
-    """按 OpenAI 协议的原始 JSON 造一条响应，再交给 litellm 的转换器 —— 运行时走的就是这条路。"""
+def response_from(usage: dict | None, model: str = "deepseek-flash", message: dict | None = None):
+    """按 OpenAI 协议的原始 JSON 造一条响应，再交给 litellm 的转换器 —— 运行时走的就是这条路。
+
+    message 留空就是原来那条最普通的回复；要测 reasoning_content 这类**消息体**上的字段时才覆盖它。
+    """
     raw = {
         "id": "chatcmpl-test",
         "object": "chat.completion",
         "created": 0,
         "model": model,
         "choices": [{"index": 0, "finish_reason": "stop",
-                     "message": {"role": "assistant", "content": "ok", "tool_calls": None}}],
+                     "message": message or {"role": "assistant", "content": "ok", "tool_calls": None}}],
     }
     if usage is not None:
         raw["usage"] = usage
@@ -112,3 +115,68 @@ def test_first_int_rejects_bool_and_non_int():
     assert _first_int("1280", 1280) == 1280
     assert _first_int(None, None) is None
     assert _first_int(0, 99) == 0  # 0 是合法读数，不许被跳过
+
+
+# ---- C21：reasoning_content ----
+
+# DeepSeek **带 tools** 时的真实消息体形状【原文 scripts/c21_reasoning_probe.py 2026-09-20 实测】：
+# content 是空串、tool_calls 一条，推理全在 reasoning_content 里 —— 正是 thought 空白的机制。
+TOOLCALL_MESSAGE = {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [{
+        "id": "call_0",
+        "type": "function",
+        "function": {"name": "calculate", "arguments": '{"expression": "17*23"}'},
+    }],
+    "reasoning_content": "17*23 = 391.",
+}
+
+
+def test_reasoning_content_lands_in_reply():
+    """主路径：provider 给的 reasoning_content 经 litellm 转换后仍取得到（决定 C21）。"""
+    reply = _to_reply(response_from(DEEPSEEK_USAGE, message=TOOLCALL_MESSAGE))
+
+    assert reply.reasoning_content == "17*23 = 391."
+
+
+def test_reasoning_survives_empty_thought():
+    """本次改动的全部理由：content 空串、推理却不空。
+
+    thought 那一列取的是 content（loop.py），所以光读 traj 的 thought 会以为模型什么都没想 ——
+    EVAL-P2-rerun.md 里 django-11138「57 步 thought 全空、38/40 轮在推理」就是这么来的。
+    """
+    reply = _to_reply(response_from(DEEPSEEK_USAGE, message=TOOLCALL_MESSAGE))
+
+    assert reply.content == ""
+    assert reply.tool_calls  # 确实是「带 tool_calls 的那种轮」，不是普通回复
+    assert reply.reasoning_content
+
+
+def test_no_reasoning_reads_none_not_empty_string():
+    """负对照：provider 不给这个字段时记 None。
+
+    litellm 在 reasoning_content is None 时会 `del self.reasoning_content`
+    （litellm/types/utils.py 的 Message.__init__），所以这里验的是「属性缺失不崩、也不冒充空串」。
+    ⚠️ 这一环 09-20 的四环探针**没测到** —— 两组都拿到了推理文本，负对照当时只有离线源码
+    证据（㉛：证据链要逐环点名）。这条测试就是补那一环的。
+    """
+    reply = _to_reply(response_from(DEEPSEEK_USAGE))
+
+    assert reply.reasoning_content is None
+
+
+def test_empty_reasoning_is_kept_as_empty_string():
+    """空串是真读数（这一轮没产出推理文本），不许折叠成 None —— 同 C20 的 0 vs None。"""
+    message = dict(TOOLCALL_MESSAGE, reasoning_content="")
+    reply = _to_reply(response_from(DEEPSEEK_USAGE, message=message))
+
+    assert reply.reasoning_content == ""
+
+
+def test_first_str_rejects_non_str():
+    """口径同 _first_int：只认字符串，空串是合法读数不许跳过。"""
+    assert _first_str(None, "x") == "x"
+    assert _first_str(123, "x") == "x"
+    assert _first_str(None, None) is None
+    assert _first_str("", "later") == ""

@@ -256,3 +256,47 @@ def test_a_reply_without_cache_readings_records_none():
 
     step = result.steps[0]
     assert (step.cache_hit_tokens, step.cache_miss_tokens, step.reasoning_tokens) == (None, None, None)
+
+
+def test_reasoning_content_reaches_the_step_record():
+    """reasoning_content 同样要一路走到 StepRecord（决定 C21）。
+
+    这里刻意把 content 设成空串：带 tool_calls 的轮**真实形态就是这样**
+    【原文 scripts/c21_reasoning_probe.py 2026-09-20 实测】，thought 那一列因此是空的。
+    """
+    client = ScriptedClient([ModelReply(
+        content="", tool_calls=[call("read_file", path="a.py")], returned_model="fake",
+        reasoning_tokens=55, reasoning_content="I should read a.py first.",
+    )])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    step = result.steps[0]
+    assert step.thought == ""  # 光看这一列会以为模型什么都没想
+    assert step.reasoning_content == "I should read a.py first."
+    assert asdict(step)["reasoning_content"] == "I should read a.py first."  # 落盘走的就是 asdict
+
+
+def test_a_reply_without_reasoning_content_records_none():
+    """不给这一列时落 None，不落 "" —— 同 C20 的 0 vs None，空串是「想了但没写」的真读数。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    assert result.steps[0].reasoning_content is None
+
+
+def test_reasoning_content_is_never_sent_back_to_the_model():
+    """DeepSeek 不收回传的 reasoning_content，塞回去是 400。
+
+    loop 构造 assistant 历史时**逐字段**取 content 与 tool_calls，新加的列不会漏进去。
+    这条守的就是那个性质 —— 免得哪天有人图省事改成把整个 reply 塞回历史（决定 C21）。
+    """
+    secret = "MUST-NOT-BE-SENT-BACK"
+    client = ScriptedClient([ModelReply(
+        content="", tool_calls=[call("read_file", path="a.py")], returned_model="fake",
+        reasoning_content=secret,
+    )])
+    episode(client, {"read_file": ok_tool}, max_steps=2)
+
+    assert client.calls >= 2, "要有第二轮，才看得到第一轮的 assistant 消息有没有进历史"
+    sent = json.dumps(client.seen[-1], ensure_ascii=False)
+    assert secret not in sent

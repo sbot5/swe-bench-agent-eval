@@ -30,7 +30,7 @@
 [`tools/`](agent/tools/) 七个工具，一工具一模块（[DESIGN](docs/DESIGN-tools.md)）·
 [`loop.py`](agent/loop.py) ReAct 循环（[DESIGN](docs/DESIGN-loop.md)）·
 [`run.py`](agent/run.py) 批量入口 · [`report.py`](agent/report.py) badcase 归因表（[DESIGN](docs/DESIGN-run.md)）。
-测试 142 条：`python -m pytest tests/ -q`（121 条假 env / 纯函数，9.4 秒）、加 `-m slow`（21 条真容器，10.8 秒）。
+测试 150 条：`python -m pytest tests/ -q`（129 条假 env / 纯函数，9.9 秒）、加 `-m slow`（21 条真容器，11.4 秒）。
 
 ### 整条链怎么在不花一分钱的情况下证明是对的
 
@@ -253,7 +253,7 @@ tests/
   fake_env.py           假执行环境，按脚本回 ExecResult，不起容器
   gold_replay.py        把 gold patch 拆成 apply_patch 调用，当假模型驱动整条链
   smoke_gold_replay.py  端到端冒烟的入口（$0）
-  test_*.py             142 条；真容器那 21 条打了 slow marker，默认跳过
+  test_*.py             150 条；真容器那 21 条打了 slow marker，默认跳过
 results/
   evaluation/<run_id>/results.json       评测结论
   evaluation/<run_id>/attribution.md     badcase 归因表（report.py 产出）

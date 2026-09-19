@@ -59,6 +59,7 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 | C18 | **删掉「There is no shell」，改写死「容器没有网」**（09-18，取代 C16） | 加了 `run_python` 之后 C16 那句是**假话** —— Python 能 `subprocess.run`，模型有 shell。prompt 撒谎有两重代价：面试官一问就穿；模型信了就不敢用 run_python。DESIGN-environment §七 那条「告诉模型 `cd` 不持久」的义务改由 run_python 的工具描述承担（「Nothing is remembered between calls」）。**新写死的那句（没有网）是真的**，负对照验过（DESIGN-tools §四 Y2） | 留着那句不改（撒谎）· 只删不补（模型不知道联网会失败，会白烧几轮去试） |
 | C19 | 工作流里**插一步「先用 run_python 复现，再动手」**，并写死「改文件用 apply_patch 不用 run_python」 | 前半是 P2 要测的假设本身：P1 量出「跑复现脚本」是三方对照里唯一没被断网消掉的能力差，而 A 组 9 条的病是 `apply_patch=0`「从未动手」——给它一个**比继续 read_file 更具体的第一步**。后半是防 run_python 绕过 apply_patch：绕过去既没有锚点唯一性检查，也让归因表里的 `apply_patch` 计数失真（⑪ 全靠这个量判别的） | 不插复现步（那就没测到 P1 量出的那条能力差）· 插了但不禁止用它改文件（`apply_patch=0` 这个判别量当场失效） |
 | C20 | **把缓存/推理三个读数落进每一步**（`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` / `completion_tokens_details.reasoning_tokens`），**取不到时记 `None` 不记 `0`**（09-18，㉖ 的修法） | `EVAL-P2.md` §5.4 推「P2 贵一倍是前缀缓存失效」只能靠**三跑外推 + 独立探针**，因为轨迹里没有这一列 —— 而 DeepSeek 一直在返回它。**`None` 和 `0` 必须分开**：0 是冷跑第一次的**真读数**，None 是供应商没给；混成 0 就是 `cost=$0.0000` 那个假读数的翻版，那个坑的代价是至今止损只剩 `--max-steps`。09-18 离线验过（$0）litellm 1.100 的访问路径：`Usage.__init__` 里有 `## DEEPSEEK MAPPING ##` 把 hit 归一化进 `prompt_tokens_details.cached_tokens`，未识别字段在结尾 `for k, v in params.items(): setattr(...)` 原样挂上；**负对照下是属性缺失、details 对象为 None，不是 0** | 只记 `prompt_tokens`/`completion_tokens`（现状，等于没有 —— 这就是㉖）· 取不到记 0（假零，正是要修的病）· 用 `prompt_tokens - hit` 反推 miss（凭空造一个没人返回过的数，⚠️ 违反「不填补」）· 顺手把 `total_tokens`、`text_tokens` 一起落（这次只解决命中率一个问题） |
+| C21 | **把 `reasoning_content` 落进每一步**，口径同 C20：**供应商没给记 `None`，给了空串记 `""`**；**不截断、不回传**（09-20，㉖ 同型仪器） | `thought` 那一列取的是 `message.content`，而**带 tool_calls 的轮 content 就是空串**【原文 `scripts/c21_reasoning_probe.py` 09-20 实测：`content=''`、`tool_calls` 1 条、`reasoning_content` 有内容】—— `django-11138` 57 步 `thought` 全空却 38/40 轮在推理（14,042 token），这两件事是同一个机制。P3 已经排掉两个候选（不是「复现跑不起来」、不是「没告诉它可以放弃」），剩下那问「**它凭什么认为自己还没复现完**」在 prompt 层问不出来（㊳：prompt 里加一条规则 ≠ 系统里多了一条规则），只能去读它到底想了什么。**照 ㉛ 逐环点名**，四环分开验：环1 provider 原始 JSON 的 message 里**有** `reasoning_content` 键（带 tools 与不带 tools 两组都有 —— 我方每次调用都带 tools，只测不带的那组等于没测）· 环2 litellm 1.100 透得出来（`common_utils.py:1715` 有键就原样返回 → `convert_dict_to_response.py:688` 传进 `Message`）· 环3 **负对照探针没测到**（两组都拿到了推理文本），由单测 + gold 回放 66 步全 `None` 补上 · 环4 原始 JSON 里就有这个键 → provider 直接给的，**不是** litellm 从 content 的 `<think>` 里剥的（那是 `_parse_content_for_reasoning` 的另一条分支，口径不同）。**体量先估后加**（P1 那两条 204MB traj 的教训）：`p2-rerun` 实测 256,176 reasoning token × 3.4 字符/token（探针实测的上界）≈ **+0.87MB**，一跑 4.1→5.0MB、最坏单条 +107KB → 不必截断 | 不做（那就答不了「为什么不动手」，而 P3 已证 prompt 层问不出来）· **并进 `thought` 那一列**（两个来源混成一列，以后分不开「模型没写 content」与「供应商没给 reasoning」，正是 C20 要避免的病）· **落盘前截断**（P1 的教训是「截断只保护上下文、不保护落盘」，不是「都得截断」；体量已实测可接受，而截断掉的正是本次要看的东西）· **回传给模型当上下文**（DeepSeek 明确不收；且改动送出去的 messages = 改 prompt 指纹，㉕ 那棵前缀缓存树作废，后续成本全不可比）· 顺手把 `thinking_blocks`／`reasoning_items` 一起落（同 C20，这次只解决一个问题） |
 
 ⚠️ **C18/C19 的效果现在【未知】**：P1 只证明了能力差存在，**没有**证明补上它就能解掉那 9 条。
 ⑦⑨ 的方差要求重复跑才压得住，所以下一次跑完**不许**拿单次结果说「run_python 提升了 X 分」。
@@ -77,7 +78,7 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 
 ## 五、测得到的和测不到的
 
-`tests/test_loop.py`（**20 条**，假客户端 + 假工具，秒级；原文写 22 条，见「已纠正的错误」第三处）覆盖：
+`tests/test_loop.py`（**23 条**，假客户端 + 假工具，秒级；原文写 22 条，见「已纠正的错误」第三处）覆盖：
 
 - 三个终止条件各一条 + 墙钟一条
 - 异常路径六条：连错即停、成功清零、同一文件三次拉黑、拉黑后不再进工具、成功一次解封、工具抛异常不炸
@@ -86,14 +87,23 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
 - 工具表：目标写法提示进到了模型看到的 schema、七个名字齐全
 - 落盘的读数两条（09-18 随 C20 加）：缓存三列一路走到 `StepRecord`（`run.py` 是 `asdict(step)` 落盘的，
   到这儿就等于到了 traj）；假客户端不给这三列时落 `None` 而不是 0
+- **`reasoning_content` 三条（09-20 随 C21 加）**：落到 `StepRecord` 且 `asdict` 带得出来（这条刻意把
+  `content` 设成空串 —— 带 tool_calls 的轮真实形态就是这样）· 不给时落 `None` 而不是 `""` ·
+  **它绝不出现在发回给模型的 messages 里**。最后一条守的是一个结构性质：`loop` 构造 assistant 历史时
+  **逐字段**取 `content` 与 `tool_calls`，所以新列不会漏进去；DeepSeek 不收回传的 `reasoning_content`，
+  哪天有人图省事改成「把整个 reply 塞回历史」，这条会当场红
 
-`tests/test_model.py`（**7 条**，09-18 随 C20 新建，$0 不发请求）覆盖 `_to_reply` 的读数提取：
+`tests/test_model.py`（**12 条**，09-18 随 C20 新建 7 条、09-20 随 C21 加 5 条，$0 不发请求）
+覆盖 `_to_reply` 的读数提取：
 
 - 主路径走 **litellm 自己的响应转换器**（`convert_to_model_response_object`），不是我手搓一个 usage 对象 ——
   ㉖ 那个坑正是「裸 HTTP 探针证明了 API 会返回，但没人验过 litellm 透不透出来」，手搓就等于把同一个洞再挖一遍
 - 负对照（供应商不给 → 三列全 `None`）· 真零（`hit=0` 要留成 0）· 只给归一化字段 `cached_tokens` 也读得到 ·
   连 `usage` 都没有时不炸 · `_first_int` 排掉 `bool`（它是 `int` 的子类，会静默变成 1/0）
 - **miss 没有归一化字段**，所以只给 `cached_tokens` 时 `cache_miss_tokens` 就是 `None`，不许拿 `prompt - hit` 补
+- C21 五条同样走转换器：主路径读得到 · **`content` 空串而推理不空**（本次改动的全部理由，用的是
+  探针实测的消息体形状）· 负对照落 `None`（**探针那一环没测到，靠这条补**）· 空串是真读数不许折叠成
+  `None` · `_first_str` 排掉非字符串
 
 **测不到的（要等第一次真跑）**：
 
@@ -111,6 +121,10 @@ run.py          起容器、绑工具、读数据集、落盘         ← 认识
   **09-19 第一次直读：58.8%**（764 轮全部有读数、每轮 hit + miss = prompt），88~89% 不成立；
   **未命中的 97% 出在 C8 开始折叠之后** —— `trim_messages` 每轮改写发出去的视图，前缀从新折叠的那条观察处断开。
   这是 C8 的一个成本代价，C8 当初的判据（上下文上限）里没有这一维。见 `EVAL-P2-rerun.md` §四
+- 🔴 **A 组「从未动手」的模型到底在想什么** —— C21（09-20）把仪器装上并逐环验过取数路径，
+  但**推理文本本身要等下一次真跑**。09-20 的探针只回答了「这个字段拿不拿得到」，
+  **没有**回答「它凭什么认为自己还没复现完」。在拿到真读数之前，
+  `EVAL-P3-prompt.md` §九 的【未知】②仍然是【未知】，不许拿 `thought` 全空当作「它没想」
 
 ## 六、⚠️ 09-16 的阻塞（一）：挂着学校 VPN 时模型 API 连不上 —— **已解除**
 
