@@ -1,0 +1,52 @@
+{
+  "pylint-dev__pylint-4551": {
+    "instance_id": "pylint-dev__pylint-4551",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-8898": {
+    "instance_id": "pylint-dev__pylint-8898",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-10554": {
+    "instance_id": "django__django-10554",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-11138": {
+    "instance_id": "django__django-11138",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-11510": {
+    "instance_id": "sphinx-doc__sphinx-11510",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sympy__sympy-18211": {
+    "instance_id": "sympy__sympy-18211",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-8638": {
+    "instance_id": "sphinx-doc__sphinx-8638",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py\nindex 000e2e8d3..5afe2993a 100644\n--- a/sphinx/domains/python.py\n+++ b/sphinx/domains/python.py\n@@ -354,7 +354,7 @@ class PyObject(ObjectDescription):\n                             'keyword', 'kwarg', 'kwparam'),\n                      typerolename='class', typenames=('paramtype', 'type'),\n                      can_collapse=True),\n-        PyTypedField('variable', label=_('Variables'), rolename='obj',\n+        PyTypedField('variable', label=_('Variables'),\n                      names=('var', 'ivar', 'cvar'),\n                      typerolename='class', typenames=('vartype',),\n                      can_collapse=True),\n"
+  },
+  "sphinx-doc__sphinx-9711": {
+    "instance_id": "sphinx-doc__sphinx-9711",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sphinx/extension.py b/sphinx/extension.py\nindex 7ec6c8518..9feba2e58 100644\n--- a/sphinx/extension.py\n+++ b/sphinx/extension.py\n@@ -10,6 +10,8 @@\n \n from typing import TYPE_CHECKING, Any, Dict\n \n+from packaging.version import InvalidVersion, Version\n+\n from sphinx.config import Config\n from sphinx.errors import VersionRequirementError\n from sphinx.locale import __\n@@ -51,13 +53,26 @@ def verify_needs_extensions(app: \"Sphinx\", config: Config) -> None:\n                               'but it is not loaded.'), extname)\n             continue\n \n-        if extension.version == 'unknown version' or reqversion > extension.version:\n+        if extension.version == 'unknown version' or _extension_is_too_old(extension.version,\n+                                                                           reqversion):\n             raise VersionRequirementError(__('This project needs the extension %s at least in '\n                                              'version %s and therefore cannot be built with '\n                                              'the loaded version (%s).') %\n                                           (extname, reqversion, extension.version))\n \n \n+def _extension_is_too_old(extversion: str, reqversion: str) -> bool:\n+    \"\"\"Check the given extension version satisfies the required version.\n+\n+    Both versions are first compared as PEP 440 versions.  If either of them\n+    cannot be parsed that way, they are compared as strings as a fallback.\n+    \"\"\"\n+    try:\n+        return Version(extversion) < Version(reqversion)\n+    except InvalidVersion:\n+        return extversion < reqversion\n+\n+\n def setup(app: \"Sphinx\") -> Dict[str, Any]:\n     app.connect('config-inited', verify_needs_extensions, priority=800)\n \n"
+  },
+  "sympy__sympy-17630": {
+    "instance_id": "sympy__sympy-17630",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-14631": {
+    "instance_id": "django__django-14631",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}

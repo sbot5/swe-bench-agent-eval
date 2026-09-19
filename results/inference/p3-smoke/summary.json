@@ -1,0 +1,31 @@
+{
+  "run_id": "p3-smoke",
+  "model": "openai/deepseek-flash",
+  "config": {
+    "max_steps": 40,
+    "cost_limit": 0.5,
+    "wall_clock_limit": 1800.0,
+    "keep_full_observations": 5,
+    "max_consecutive_tool_errors": 5,
+    "max_file_edit_failures": 3,
+    "max_empty_replies": 2
+  },
+  "elapsed_seconds": 70.8,
+  "instances": [
+    {
+      "instance_id": "django__django-10554",
+      "stop_reason": "max_steps",
+      "steps": 54,
+      "api_calls": 40,
+      "cost": 0.0,
+      "loop_seconds": 65.2,
+      "wall_seconds": 70.8,
+      "patch_chars": 0,
+      "tool_errors": 3,
+      "returned_models": [
+        "deepseek-flash"
+      ],
+      "error": ""
+    }
+  ]
+}

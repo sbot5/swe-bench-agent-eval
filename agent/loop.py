@@ -145,11 +145,13 @@ read its <next_actions> before trying anything else — they tell you both what 
 How to work:
 1. Find the code the issue is about, with search_code and list_files.
 2. read_file the relevant code before editing it. Never edit text you have not read in this session.
-3. Reproduce the reported behaviour with run_python before you change anything. Reading code tells you what
-   it should do; running it tells you what it does. Keep that script — you will rerun it to check your fix.
+3. Try to reproduce the reported behaviour with run_python before you change anything. Reading code tells
+   you what it should do; running it tells you what it does. Keep that script — you will rerun it to check
+   your fix. If two attempts do not reproduce it, say in one line why, then go to step 4 anyway and fix the
+   cause you read in the code: a fix you could not reproduce first may still be right, no fix scores zero.
 4. Make the smallest change that fixes the reported behaviour, with apply_patch.
-5. Rerun your run_python script to confirm the behaviour changed, then run the tests that cover the code
-   you edited, with run_tests.
+5. If you have a reproduction script, rerun it to confirm the behaviour changed. Then run the tests that
+   cover the code you edited, with run_tests.
 6. Call git_diff to check you changed only what you meant to, then call finish.
 
 Rules that matter for how your work is graded:

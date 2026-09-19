@@ -1,0 +1,52 @@
+{
+  "pylint-dev__pylint-4551": {
+    "instance_id": "pylint-dev__pylint-4551",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-8898": {
+    "instance_id": "pylint-dev__pylint-8898",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-10554": {
+    "instance_id": "django__django-10554",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-11138": {
+    "instance_id": "django__django-11138",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-11510": {
+    "instance_id": "sphinx-doc__sphinx-11510",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-8638": {
+    "instance_id": "sphinx-doc__sphinx-8638",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sympy__sympy-17630": {
+    "instance_id": "sympy__sympy-17630",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sympy__sympy-18211": {
+    "instance_id": "sympy__sympy-18211",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sympy/core/relational.py b/sympy/core/relational.py\nindex f581bfa3c4..12a270f3bd 100644\n--- a/sympy/core/relational.py\n+++ b/sympy/core/relational.py\n@@ -389,9 +389,12 @@ def __nonzero__(self):\n     def _eval_as_set(self):\n         # self is univariate and periodicity(self, x) in (0, None)\n         from sympy.solvers.inequalities import solve_univariate_inequality\n+        from sympy.solvers.solveset import solveset\n         syms = self.free_symbols\n         assert len(syms) == 1\n         x = syms.pop()\n+        if self.rel_op == '==':\n+            return solveset(self, x, domain=S.Reals)\n         return solve_univariate_inequality(self, x, relational=False)\n \n     @property\n"
+  },
+  "django__django-14631": {
+    "instance_id": "django__django-14631",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/django/forms/boundfield.py b/django/forms/boundfield.py\nindex 88adadb37d..b83d17f724 100644\n--- a/django/forms/boundfield.py\n+++ b/django/forms/boundfield.py\n@@ -1,6 +1,7 @@\n import datetime\n import re\n \n+from django.core.exceptions import ValidationError\n from django.forms.utils import flatatt, pretty_name\n from django.forms.widgets import Textarea, TextInput\n from django.utils.functional import cached_property\n@@ -130,6 +131,23 @@ class BoundField:\n             data = self.field.bound_data(self.data, data)\n         return self.field.prepare_value(data)\n \n+    def _did_change(self):\n+        \"\"\"\n+        Return True if the field's value has changed from its initial value.\n+        \"\"\"\n+        if not self.field.show_hidden_initial:\n+            return self.field.has_changed(self.initial, self.data)\n+        initial_prefixed_name = self.form.add_initial_prefix(self.name)\n+        hidden_widget = self.field.hidden_widget()\n+        try:\n+            initial_value = self.field.to_python(\n+                self.form._widget_data_value(hidden_widget, initial_prefixed_name)\n+            )\n+        except ValidationError:\n+            # Always assume data has changed if validation fails.\n+            return True\n+        return self.field.has_changed(initial_value, self.data)\n+\n     def label_tag(self, contents=None, attrs=None, label_suffix=None):\n         \"\"\"\n         Wrap the given contents in a <label>, if the field has an ID attribute.\ndiff --git a/django/forms/forms.py b/django/forms/forms.py\nindex d14037bfe9..dfe78dd1f4 100644\n--- a/django/forms/forms.py\n+++ b/django/forms/forms.py\n@@ -386,16 +386,18 @@ class BaseForm:\n         self._clean_form()\n         self._post_clean()\n \n+    def _bound_items(self):\n+        \"\"\"Yield (name, bf) pairs, where bf is a BoundField object.\"\"\"\n+        for name in self.fields:\n+            yield name, self[name]\n+\n     def _clean_fields(self):\n-        for name, field in self.fields.items():\n-            if field.disabled:\n-                value = self.get_initial_for_field(field, name)\n-            else:\n-                value = self._field_data_value(field, self.add_prefix(name))\n+        for name, bf in self._bound_items():\n+            field = bf.field\n+            value = bf.initial if field.disabled else bf.data\n             try:\n                 if isinstance(field, FileField):\n-                    initial = self.get_initial_for_field(field, name)\n-                    value = field.clean(value, initial)\n+                    value = field.clean(value, bf.initial)\n                 else:\n                     value = field.clean(value)\n                 self.cleaned_data[name] = value\n@@ -436,27 +438,7 @@ class BaseForm:\n \n     @cached_property\n     def changed_data(self):\n-        data = []\n-        for name, field in self.fields.items():\n-            data_value = self._field_data_value(field, self.add_prefix(name))\n-            if not field.show_hidden_initial:\n-                # Use the BoundField's initial as this is the value passed to\n-                # the widget.\n-                initial_value = self[name].initial\n-            else:\n-                initial_prefixed_name = self.add_initial_prefix(name)\n-                hidden_widget = field.hidden_widget()\n-                try:\n-                    initial_value = field.to_python(\n-                        self._widget_data_value(hidden_widget, initial_prefixed_name)\n-                    )\n-                except ValidationError:\n-                    # Always assume data has changed if validation fails.\n-                    data.append(name)\n-                    continue\n-            if field.has_changed(initial_value, data_value):\n-                data.append(name)\n-        return data\n+        return [name for name, bf in self._bound_items() if bf._did_change()]\n \n     @property\n     def media(self):\n"
+  },
+  "sphinx-doc__sphinx-9711": {
+    "instance_id": "sphinx-doc__sphinx-9711",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sphinx/extension.py b/sphinx/extension.py\nindex 7ec6c8518..b3a6d928d 100644\n--- a/sphinx/extension.py\n+++ b/sphinx/extension.py\n@@ -10,6 +10,8 @@\n \n from typing import TYPE_CHECKING, Any, Dict\n \n+from packaging.version import InvalidVersion, Version\n+\n from sphinx.config import Config\n from sphinx.errors import VersionRequirementError\n from sphinx.locale import __\n@@ -51,12 +53,23 @@ def verify_needs_extensions(app: \"Sphinx\", config: Config) -> None:\n                               'but it is not loaded.'), extname)\n             continue\n \n-        if extension.version == 'unknown version' or reqversion > extension.version:\n+        if extension.version == 'unknown version':\n             raise VersionRequirementError(__('This project needs the extension %s at least in '\n                                              'version %s and therefore cannot be built with '\n                                              'the loaded version (%s).') %\n                                           (extname, reqversion, extension.version))\n \n+        try:\n+            if Version(extension.version) < Version(reqversion):\n+                raise VersionRequirementError(\n+                    __('This project needs the extension %s at least in version %s and '\n+                       'therefore cannot be built with the loaded version (%s).') %\n+                    (extname, reqversion, extension.version))\n+        except InvalidVersion:\n+            logger.warning(__('The %s extension is required in version %s, but the loaded '\n+                              'version is invalid (%s).'), extname, reqversion,\n+                           extension.version)\n+\n \n def setup(app: \"Sphinx\") -> Dict[str, Any]:\n     app.connect('config-inited', verify_needs_extensions, priority=800)\n"
+  }
+}
