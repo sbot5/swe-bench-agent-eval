@@ -20,7 +20,8 @@
 
 ### 1.1 已纠正的错误（不静默改）
 
-上一版交接单（Monash `Career/07-swe-bench-agent/CLAUDE.md`，commit `7c2432f`）写：
+上一版交接单（Monash `Career/07-swe-bench-agent/CLAUDE.md`，commit `7c2432f`；⚠️ 该目录已于
+**09-20 被重组为 `Career/04-项目/`**，本节写作时还是旧路径，此处按原样保留并在此注明，不静默改）写：
 
 > 这个量在**已有的 4 跑轨迹上就能算**（`a-reason-r1/r2` + `p3-r1/r2`，都在库里）
 
