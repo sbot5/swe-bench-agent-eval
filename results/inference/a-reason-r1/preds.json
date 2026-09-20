@@ -1,0 +1,52 @@
+{
+  "django__django-11138": {
+    "instance_id": "django__django-11138",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-8898": {
+    "instance_id": "pylint-dev__pylint-8898",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-10554": {
+    "instance_id": "django__django-10554",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-4551": {
+    "instance_id": "pylint-dev__pylint-4551",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-11510": {
+    "instance_id": "sphinx-doc__sphinx-11510",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sympy__sympy-17630": {
+    "instance_id": "sympy__sympy-17630",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-8638": {
+    "instance_id": "sphinx-doc__sphinx-8638",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-9711": {
+    "instance_id": "sphinx-doc__sphinx-9711",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/CHANGES b/CHANGES\nindex ae7cbbe7c..5bccd3831 100644\n--- a/CHANGES\n+++ b/CHANGES\n@@ -63,6 +63,9 @@ Bugs fixed\n * #9678: linkcheck: file extension was shown twice in warnings\n * #9697: py domain: An index entry with parens was registered for ``py:method``\n   directive with ``:property:`` option\n+* ``needs_extensions`` compares extension versions using PEP 440 version\n+  ordering instead of lexicographic string ordering, so that e.g. ``0.10``\n+  is recognised as newer than ``0.6``\n \n Testing\n --------\ndiff --git a/sphinx/extension.py b/sphinx/extension.py\nindex 7ec6c8518..e5dcfa422 100644\n--- a/sphinx/extension.py\n+++ b/sphinx/extension.py\n@@ -10,6 +10,8 @@\n \n from typing import TYPE_CHECKING, Any, Dict\n \n+from packaging.version import InvalidVersion, Version\n+\n from sphinx.config import Config\n from sphinx.errors import VersionRequirementError\n from sphinx.locale import __\n@@ -51,7 +53,22 @@ def verify_needs_extensions(app: \"Sphinx\", config: Config) -> None:\n                               'but it is not loaded.'), extname)\n             continue\n \n-        if extension.version == 'unknown version' or reqversion > extension.version:\n+        if extension.version == 'unknown version':\n+            raise VersionRequirementError(__('This project needs the extension %s at least in '\n+                                             'version %s and therefore cannot be built with '\n+                                             'the loaded version (%s).') %\n+                                          (extname, reqversion, extension.version))\n+\n+        try:\n+            required = Version(reqversion)\n+            installed = Version(extension.version)\n+        except InvalidVersion:\n+            raise VersionRequirementError(__('This project needs the extension %s at least in '\n+                                             'version %s and therefore cannot be built with '\n+                                             'the loaded version (%s).') %\n+                                          (extname, reqversion, extension.version))\n+\n+        if installed < required:\n             raise VersionRequirementError(__('This project needs the extension %s at least in '\n                                              'version %s and therefore cannot be built with '\n                                              'the loaded version (%s).') %\n"
+  },
+  "sympy__sympy-18211": {
+    "instance_id": "sympy__sympy-18211",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "django__django-14631": {
+    "instance_id": "django__django-14631",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}

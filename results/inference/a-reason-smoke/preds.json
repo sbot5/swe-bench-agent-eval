@@ -1,0 +1,7 @@
+{
+  "sphinx-doc__sphinx-9698": {
+    "instance_id": "sphinx-doc__sphinx-9698",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}
