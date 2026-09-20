@@ -120,11 +120,36 @@ BROWSE_PAT = [
     r"enumerate\(open\(", r"open\(['\"][^'\"]+['\"]\)",
     r"\[['\"]cat['\"]",
 ]
-TRIVIAL_PAT = [r"^\s*import \w+\s*\n\s*print\(\w+\.(__version__|VERSION|get_version\(\)|__file__)", r"HELLO"]
+TRIVIAL_PAT = [r"HELLO"]  # 冒烟用的固定串；版本探查改由 _version_probe_only() 整段判（待办②）
+
+# ⚠️ 待办② 修正（2026-09-20，不静默改）。原 TRIVIAL_PAT 第一条是
+#     r"^\s*import \w+\s*\n\s*print\(\w+\.(__version__|VERSION|get_version\(\)|__file__)"
+# 配 re.M —— 只要**任意位置**出现「import x 换行 print(x.__version__)」就判 TRIVIAL，
+# **不看版本行后面还跑了什么**。实测有三轮真复现被它抢走，害得 T 偏晚或不存在
+# （docs/EVAL-switch-point.md §4.4 第一条、§七第 2 条；影响面与新旧读数对照见 docs/EVAL-repair-gate-N.md §一）。
+# 改法：整段**只有** import 与版本打印才算 TRIVIAL。
+# `HELLO` 那条**保持原行为不动** —— 收严它会把 print("HELLO") 这类冒烟代码推进 REPRO 兜底，等于换一个病。
+_VER_ATTR = r"(?:__version__|VERSION|get_version\(\)|__file__)"
+_PROBE_LINE = re.compile(
+    r"^\s*(?:"
+    r"#.*"
+    r"|import\s+[\w.]+(?:\s+as\s+\w+)?"
+    r"|from\s+[\w.]+\s+import\s+[\w.,\s*]+"
+    rf"|print\([^()]*{_VER_ATTR}[^()]*\)"
+    r")\s*$"
+)
+
+
+def _version_probe_only(code: str) -> bool:
+    """整段只有 import 与版本打印 —— 什么都没跑，才算 TRIVIAL（待办②）。"""
+    lines = [ln for ln in code.splitlines() if ln.strip()]
+    return bool(lines) and all(_PROBE_LINE.match(ln) for ln in lines)
 
 
 def classify(code: str) -> str:
     c = code
+    if _version_probe_only(c):
+        return "TRIVIAL"
     for p in TRIVIAL_PAT:
         if re.search(p, c, re.M):
             return "TRIVIAL"

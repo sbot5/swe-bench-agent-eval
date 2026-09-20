@@ -38,12 +38,16 @@ def script_exit(step: dict) -> str:
     return m.group(1) if m else "?"
 
 
-def find_t(steps: list[dict], strict: bool = True) -> int | None:
-    """T = 首次**成功**复现的轮号（§2.1）。strict=False 即 T_loose（去掉 classify 条件）。"""
+def find_t(steps: list[dict], strict: bool = True, cls=classify) -> int | None:
+    """T = 首次**成功**复现的轮号（§2.1）。strict=False 即 T_loose（去掉 classify 条件）。
+
+    `cls` 只为 classify_diff.py 对比新旧判定而参数化，默认即判据本身；
+    调用方不要传它来改口径（§二 锁定）。
+    """
     for s in steps:
         if s["tool_name"] != "run_python" or script_exit(s) != "0":
             continue
-        if strict and classify(code_of(s)) != "REPRO":
+        if strict and cls(code_of(s)) != "REPRO":
             continue
         return s["index"]
     return None
