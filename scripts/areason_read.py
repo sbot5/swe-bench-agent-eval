@@ -135,7 +135,6 @@ def stats(runs: list[str]) -> None:
         if tot[0] and not tot[1]:
             print("  ⚠️ 全跑 0 轮有 reasoning —— C21 之后的跑落到这里就是 H5，主问题作废（§1.4）")
         print()
-    print("有reasoning=0 且这一跑在 C21 之后 → 落 H5，主问题作废（判据 §1.4）")
 
 
 def excerpt(run: str) -> None:
