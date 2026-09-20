@@ -128,8 +128,13 @@ def stats(runs: list[str]) -> None:
             for k, v in enumerate([len(tmap), has, len(seq), ok0, len(edits)]):
                 tot[k] += v
         print(f"{'  小计':<14}{'':<16}{tot[0]:<5}{tot[1]:<12}{tot[2]:<6}{tot[3]:<11}{tot[4]:<7}")
+        print(f"  reasoning 覆盖 {tot[1]}/{tot[0]} 轮" + (f" = {tot[1] / tot[0]:.0%}" if tot[0] else ""))
         missing = [i for i in GROUP_A + CONTROLS if i not in got]
-        print(f"  名单缺失：{[m.split('__')[-1] for m in missing] or '(无)'}\n")
+        print(f"  名单缺失：{[m.split('__')[-1] for m in missing] or '(无)'}")
+        # 这句必须由数据算出来，不许无条件打印：无条件打印的「结论」就是 T10 那种假读数
+        if tot[0] and not tot[1]:
+            print("  ⚠️ 全跑 0 轮有 reasoning —— C21 之后的跑落到这里就是 H5，主问题作废（§1.4）")
+        print()
     print("有reasoning=0 且这一跑在 C21 之后 → 落 H5，主问题作废（判据 §1.4）")
 
 
