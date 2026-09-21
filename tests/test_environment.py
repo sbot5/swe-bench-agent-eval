@@ -9,7 +9,14 @@ import subprocess
 
 import pytest
 
-from agent.environment import OVERFLOW_DIR, REPO_ROOT, DockerEnvironment, ExecResult, _safe_decode
+from agent.environment import (
+    OVERFLOW_DIR,
+    REPO_ROOT,
+    RUN_PYTHON_LOG,
+    DockerEnvironment,
+    ExecResult,
+    _safe_decode,
+)
 from tests.fake_env import FakeEnvironment, ok, tail_probe, timed_out
 
 IMAGE = "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"
@@ -92,19 +99,53 @@ def test_execute_to_file_still_reads_the_log_after_a_timeout():
 def test_execute_to_file_does_not_invent_a_size_it_could_not_read():
     """`wc -c` 那一行读不出来时 total_bytes 记 0，不拿一个编出来的数去算「丢了多少」（同 C20）。"""
     env = FakeEnvironment([ok(), ok(stdout="not-a-number\nwhatever")])
-    result = DockerEnvironment.execute_to_file(env, "true", log_name="x.log", tail_bytes=100)
+    result = DockerEnvironment.execute_to_file(env, "true", log_name=RUN_PYTHON_LOG, tail_bytes=100)
 
     assert result.total_bytes == 0
     assert result.tail == "", "读不出字节数就连尾部也不敢当真"
     assert not result.truncated
 
 
-def test_execute_to_file_rejects_a_log_name_that_is_not_an_identifier():
-    """log_name 由我们自己传，不是模型参数 —— 但它会拼进命令，所以在这里挡住（决定 23 的边界）。"""
+def test_execute_to_file_only_accepts_a_log_name_read_file_can_read_back():
+    """写得进去的和读得回来的必须是同一份清单（Codex 审稿 MAJOR-1）。
+
+    log_name 不是模型参数，但它决定了那份输出模型到底取不取得回来 —— 写到一个
+    read_file 白名单不认的名字上，「截断可恢复」当场变成空话。
+    """
     env = FakeEnvironment([])
-    for bad in ["../escape", "a b", "x;rm -rf /", ""]:
+    for bad in ["../escape", "a b", "x;rm -rf /", "", "evil.log", f"{RUN_PYTHON_LOG}.bak"]:
         with pytest.raises(ValueError):
             DockerEnvironment.execute_to_file(env, "true", log_name=bad, tail_bytes=100)
+
+
+def test_truncated_is_decided_by_the_budget_not_the_decoded_tail():
+    """判据是预算，不是 len(tail.encode())（Codex 审稿 MAJOR-3）。
+
+    `tail -c` 按**字节**切，切在多字节字符中间时 execute() 的 errors="replace" 会把残字节
+    换成 U+FFFD（UTF-8 下 3 字节）—— 解码后的 str 再 encode 一次，长度和容器里取回的
+    原始字节数对不上。这里用一个被切坏的中文尾部把这件事钉死。
+    """
+    # 「中」是 3 字节；掐掉头一个字节，剩下两个残字节各被替换成一个 U+FFFD
+    broken_tail = "��文"
+    assert len(broken_tail.encode()) != 5, "构造前提：重新 encode 的长度就是对不上"
+
+    env = FakeEnvironment([ok(), tail_probe(5, broken_tail)])
+    result = DockerEnvironment.execute_to_file(env, "cat x", log_name=RUN_PYTHON_LOG, tail_bytes=5)
+
+    assert result.total_bytes == 5 and result.tail_bytes == 5
+    assert not result.truncated, "总大小没超预算就是没截断，不管解码后的字节数变成多少"
+
+
+def test_a_timed_out_read_reports_its_size_as_a_snapshot():
+    """超时时容器里的进程还在写，total_bytes 只是读那一刻的快照（Codex 审稿 MAJOR-2）。"""
+    env = FakeEnvironment([timed_out(), tail_probe(120, "still going")])
+    result = DockerEnvironment.execute_to_file(env, "sleep 999", log_name=RUN_PYTHON_LOG,
+                                               tail_bytes=100)
+
+    assert result.timed_out
+    assert result.truncated, "120 > 100，按预算算就是截断了"
+    # 关键：dropped 走预算，永远非负 —— 文件边长边读时 total 可能比取回的尾部还小
+    assert result.total_bytes - result.tail_bytes == 20
 
 
 pytest_slow = pytest.mark.slow

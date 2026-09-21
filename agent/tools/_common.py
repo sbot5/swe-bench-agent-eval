@@ -8,7 +8,7 @@ _validate_positive_int / _validate_legal_path 被 5 个工具用，_preview 被 
 import posixpath
 from typing import Final
 
-from agent.environment import OVERFLOW_DIR, REPO_ROOT, TailResult
+from agent.environment import OVERFLOW_DIR, OVERFLOW_LOGS, REPO_ROOT, TailResult
 from agent.observation import MAX_CONTENT_CHARS, FailureCategory, Observation
 
 DEFAULT_OFFSET: Final[int] = 1
@@ -30,9 +30,11 @@ DEFAULT_SCRIPT_TIMEOUT: Final[int] = 60
 MAX_SCRIPT_TIMEOUT: Final[int] = 300  # 比 run_tests 的 900 紧：一次性复现脚本不该跑几分钟（Y7）
 MAX_CODE_B64: Final[int] = 64 * 1024  # 与 MAX_NEW_STRING_B64 同理由（Y1）
 SCRIPT_PATH: Final[str] = "/tmp/agent_run_python.py"  # 写 /tmp 不写 /testbed，否则 git_diff 会列成未跟踪文件（Y9）
-# 完整输出落在 OVERFLOW_DIR 下的这个文件。**每次覆盖**：模型要读的总是刚刚那一次，
-# 保留历史就要管清理，而容器本来就是一条实例一个、跑完即删（Y12）
-SCRIPT_LOG_NAME: Final[str] = "run_python.log"
+# read_file 能读回的那几份溢写日志的**完整路径**。清单的唯一来源是 environment.OVERFLOW_LOGS
+# —— 能写进去的和能读回来的必须是同一份，分两处写早晚会错开（Y12）
+_OVERFLOW_LOG_PATHS: Final[frozenset[str]] = frozenset(
+    f"{OVERFLOW_DIR}/{name}" for name in OVERFLOW_LOGS
+)
 MAX_SCRIPT_OUTPUT_CHARS: Final[int] = MAX_CONTENT_CHARS  # 工具层就截断，不把整份交给 Observation（Y6）
 _TOP_FILES: Final[int] = 5
 _MAX_SELECTED_FILES: Final[int] = 400  # 每个文件至少占「文件名 + 1 行」约 25 字符，预算装不下更多；也让命令远离 128KB 单参数上限
@@ -109,8 +111,9 @@ def _validate_legal_path(path: object, args_context: str, *,
         posixpath.join(REPO_ROOT, path)
     )
 
-    # 溢写日志的例外：路径由我们自己拼（environment.execute_to_file），模型只是把它抄回来
-    if allow_overflow and full_path.startswith(OVERFLOW_DIR + "/"):
+    # 溢写日志的例外：**逐个文件**放行，不是放行那个目录 —— 模型能用 run_python 往
+    # OVERFLOW_DIR 写文件，按目录放行等于让它自己造一条读任意内容的路（Codex 审稿 MAJOR-1）
+    if allow_overflow and full_path in _OVERFLOW_LOG_PATHS:
         return full_path
 
     if full_path != REPO_ROOT and not full_path.startswith(REPO_ROOT + "/"):
@@ -167,18 +170,34 @@ def _tail_with_path(result: TailResult) -> str:
 
     和 _keep_tail 的分工：截断已经在**容器里**做完了（execute_to_file 的 tail -c），
     这里只负责把丢掉的量和取回的路径写给模型 —— 截断从此是**可恢复**的，
-    不再只是「保护上下文」。路径在 REPO_ROOT 下，read_file 的白名单放行。
+    不再只是「保护上下文」。路径在 OVERFLOW_DIR，read_file 的窄口子放行。
 
     单位是**字节**不是字符：截断是 tail -c 做的，这里报 chars 会对不上账。
+    丢掉的量按**预算**算（total_bytes - tail_bytes），不按 len(tail.encode()) ——
+    理由见 TailResult.truncated，那样算在多字节边界上会得出错的数，超时时甚至是负数
+    （Codex 审稿 2026-09-21 MAJOR-2 / MAJOR-3）。
     """
-    if not result.truncated:
+    notices = []
+
+    if result.truncated:
+        dropped = result.total_bytes - result.tail_bytes
+        notices.append(
+            f"[TRUNCATED: dropped the first {dropped} of {result.total_bytes} bytes of output; "
+            f"the tail is kept because failures and the summary are printed last. "
+            f"The complete output is in the container at {result.path} — "
+            f"read_file that path if you need the part that was dropped.]"
+        )
+
+    if result.timed_out:
+        # 进程还活着，文件还在长 —— 报的数是读那一刻的快照，不许写成终值
+        notices.append(
+            f"[NOTE: the process was still running when this was read, so "
+            f"{result.total_bytes} bytes is a snapshot, not the final size. "
+            f"What it has written so far is at {result.path}.]"
+        )
+
+    if not notices:
         return result.tail
 
-    dropped = result.total_bytes - len(result.tail.encode())
-    notice = (
-        f"[TRUNCATED: dropped the first {dropped} of {result.total_bytes} bytes of output; "
-        f"the tail is kept because failures and the summary are printed last. "
-        f"The complete output is in the container at {result.path} — "
-        f"read_file that path if you need the part that was dropped.]"
-    )
-    return f"{notice}\n\n{result.tail}" if result.tail else notice
+    head = "\n".join(notices)
+    return f"{head}\n\n{result.tail}" if result.tail else head

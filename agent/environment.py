@@ -20,6 +20,14 @@ REPO_ROOT: Final = "/testbed"
 # 代价是 read_file 的路径白名单要为它开一个窄口子（_common._validate_legal_path 的 allow_overflow）。
 OVERFLOW_DIR: Final = "/tmp/agent-overflow"
 
+RUN_PYTHON_LOG: Final[str] = "run_python.log"
+# read_file 能读回的溢写日志，**逐个列出**，不是「这个目录下的都行」。
+# 按目录放行的话，模型用 run_python 往那里写一个文件、再 read_file 读回来，白名单就松了一格
+# —— 它本来就能用 run_python 读任意文件，但那是它自己的能力，不该让白名单也跟着退让
+# （Codex 审稿 2026-09-21 MAJOR-1）。execute_to_file 只接受这个集合里的名字，
+# 所以「写得进去的」和「读得回来的」永远是同一份清单。
+OVERFLOW_LOGS: Final[frozenset[str]] = frozenset({RUN_PYTHON_LOG})
+
 @dataclass(frozen=True)
 class ExecResult:
     """容器内一条命令的执行结果快照。只给 tools 包 看，由它加工成 Observation；模型看不到。
@@ -48,9 +56,13 @@ class TailResult:
     与 ExecResult 的区别只有一条：tail **不是**完整输出，是 tail_bytes 预算内的尾部。
     total_bytes 是容器里那份的真实大小，path 是它的容器内路径 —— 模型能用 read_file 读回去。
     stderr 没有单独一列：execute_to_file 把两条流并进同一个文件（顺序才是对的，同 T3）。
+
+    ⚠️ timed_out 时 total_bytes 是**快照不是终值**：超时只杀宿主机上的客户端，容器里的进程
+    还在往那个文件写，`wc -c` 读到的是那一刻的大小（Codex 审稿 2026-09-21 MAJOR-2）。
     """
     tail: str
     total_bytes: int
+    tail_bytes: int
     path: str
     timed_out: bool
     duration: float
@@ -58,8 +70,15 @@ class TailResult:
 
     @property
     def truncated(self) -> bool:
-        """尾部没装下全部输出。按**字节**比，因为截断是容器里的 tail -c 做的。"""
-        return self.total_bytes > len(self.tail.encode())
+        """尾部没装下全部输出。判据是**预算**，不是 len(tail.encode())。
+
+        `tail -c N` 取回的就是最后 min(N, total) 个字节，所以 total > N 时必然截断过。
+        不能拿解码后的 str 反推字节数：多字节字符被 `tail -c` 从中间切开时，
+        execute() 的 errors="replace" 会把那个残字节换成 U+FFFD（UTF-8 下 3 字节），
+        重新 .encode() 的长度和容器里真正取回的字节数对不上
+        （Codex 审稿 2026-09-21 MAJOR-3）。
+        """
+        return self.total_bytes > self.tail_bytes
 
 class DockerEnvironment:
     """一条实例一个容器的完整生命周期。必须用 with：
@@ -228,12 +247,16 @@ class DockerEnvironment:
 
         超时也照样去读那个文件：超时只杀宿主机上的 docker exec 客户端，容器里的进程还在写，
         能读回多少算多少（比 TimeoutExpired 那份 partial output 完整，DESIGN-environment §七）。
+        ⚠️ 代价是**超时那条路最坏要多等 60 秒**（probe 自己的超时）——
+        最坏总耗时 = timeout + 60。有意为之：超时正是最需要看输出的时候，
+        而 `wc` + `tail` 在正常容器里是毫秒级，60 秒是给「容器也挂了」留的上限
+        （Codex 审稿 2026-09-21 MINOR）。
 
-        log_name 必须是纯标识符。这一层仍然不做 allowlist（决定 23）—— cmd 里的模型参数由
-        tools 包 quote 好再传进来；这里 quote 的只有我们自己的常量路径。
+        log_name 必须在 OVERFLOW_LOGS 里。这一层仍然不做命令 allowlist（决定 23）——
+        cmd 里的模型参数由 tools 包 quote 好再传进来；这里只认自己的常量路径。
         """
-        if not log_name or not log_name.replace("-", "").replace("_", "").replace(".", "").isalnum():
-            raise ValueError(f"log_name must be a plain identifier, got: {log_name!r}")
+        if log_name not in OVERFLOW_LOGS:
+            raise ValueError(f"log_name must be one of {sorted(OVERFLOW_LOGS)}, got: {log_name!r}")
 
         path = f"{OVERFLOW_DIR}/{log_name}"
         quoted_path = shlex.quote(path)
@@ -261,6 +284,7 @@ class DockerEnvironment:
         return TailResult(
             tail=tail,
             total_bytes=total_bytes,
+            tail_bytes=tail_bytes,
             path=path,
             timed_out=run_result.timed_out,
             duration=run_result.duration,

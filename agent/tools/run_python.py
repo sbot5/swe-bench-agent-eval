@@ -5,7 +5,7 @@
 import base64
 import shlex
 
-from agent.environment import DockerEnvironment
+from agent.environment import RUN_PYTHON_LOG, DockerEnvironment
 from agent.observation import MAX_CONTENT_CHARS, FailureCategory, Observation
 from agent.tools._common import (
     CONDA_ACTIVATE,
@@ -13,7 +13,6 @@ from agent.tools._common import (
     MAX_CODE_B64,
     MAX_SCRIPT_OUTPUT_CHARS,
     MAX_SCRIPT_TIMEOUT,
-    SCRIPT_LOG_NAME,
     SCRIPT_PATH,
     _keep_tail,
     _preview,
@@ -114,7 +113,7 @@ def run_python(
     budget = max(0, MAX_SCRIPT_OUTPUT_CHARS - len(run_ctx) - 4)
     exec_result = env.execute_to_file(
         f"{CONDA_ACTIVATE} && python {quoted_script}",
-        log_name=SCRIPT_LOG_NAME,
+        log_name=RUN_PYTHON_LOG,
         tail_bytes=budget,
         timeout=timeout,
     )

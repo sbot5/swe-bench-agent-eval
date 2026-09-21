@@ -451,13 +451,18 @@ def test_the_overflow_exception_is_narrow():
     assert isinstance(denied, Observation)
     assert denied.failure_category == FailureCategory.PATH_OUTSIDE_ROOT
 
-    # 开关不等于「放行整个 /tmp」：邻居目录、前缀相同的目录、目录本身、穿越，全都不行
+    # 开关不等于「放行整个 /tmp」，**也不等于放行整个 OVERFLOW_DIR**
     for outside in [
         "/tmp/agent_run_python.py",          # run_python 的脚本，不是它的输出
         "/tmp/passwd",
         f"{OVERFLOW_DIR}-evil/x",            # 前缀相同但不是同一个目录
         OVERFLOW_DIR,                        # 目录本身不是文件
         f"{OVERFLOW_DIR}/../../etc/passwd",  # normpath 之后就不在里面了
+        # ↓ Codex 审稿 MAJOR-1：模型能用 run_python 往这个目录写文件。按目录放行的话，
+        #   它就自己造出了一条「写任意内容 → read_file 读回来」的路
+        f"{OVERFLOW_DIR}/evil.txt",
+        f"{OVERFLOW_DIR}/run_python.log.bak",
+        f"{OVERFLOW_DIR}/sub/run_python.log",
     ]:
         result = _validate_legal_path(outside, "ctx", allow_overflow=True)
         assert isinstance(result, Observation), f"should have been denied: {outside}"
