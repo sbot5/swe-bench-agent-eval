@@ -22,17 +22,19 @@ DEEPSEEK_USAGE = {
 }
 
 
-def response_from(usage: dict | None, model: str = "deepseek-flash", message: dict | None = None):
+def response_from(usage: dict | None, model: str = "deepseek-flash", message: dict | None = None,
+                  finish_reason: str | None = "stop"):
     """按 OpenAI 协议的原始 JSON 造一条响应，再交给 litellm 的转换器 —— 运行时走的就是这条路。
 
     message 留空就是原来那条最普通的回复；要测 reasoning_content 这类**消息体**上的字段时才覆盖它。
+    finish_reason 是 **choice 上**的字段（不在 message 里），默认 "stop" 保持原有用例不变（决定 C22）。
     """
     raw = {
         "id": "chatcmpl-test",
         "object": "chat.completion",
         "created": 0,
         "model": model,
-        "choices": [{"index": 0, "finish_reason": "stop",
+        "choices": [{"index": 0, "finish_reason": finish_reason,
                      "message": message or {"role": "assistant", "content": "ok", "tool_calls": None}}],
     }
     if usage is not None:
@@ -180,3 +182,36 @@ def test_first_str_rejects_non_str():
     assert _first_str(123, "x") == "x"
     assert _first_str(None, None) is None
     assert _first_str("", "later") == ""
+
+
+# ---- C22：api_finish_reason ----
+
+# 这一列是为了回答「apply_patch 的参数有没有被 token 上限砍掉半截」。本轮**只落盘不改行为**：
+# 没拿到真读数之前就整批作废 tool_calls，是在没有证据时改行为（ⓐ′① 的判据）。
+
+
+def test_api_finish_reason_lands_in_reply():
+    """主路径：finish_reason 在 choice 上、不在 message 上，取的必须是 choice 那个。"""
+    reply = _to_reply(response_from(DEEPSEEK_USAGE))
+
+    assert reply.api_finish_reason == "stop"
+
+
+def test_api_finish_reason_length_is_visible():
+    """真正要抓的那个值：输出被 token 上限砍断时，这一列必须能读出 length。"""
+    reply = _to_reply(response_from(DEEPSEEK_USAGE, finish_reason="length"))
+
+    assert reply.api_finish_reason == "length"
+
+
+def test_api_finish_reason_missing_is_none_not_empty():
+    """供应商没给就是 None —— 不许拿 "" 冒充（决定 C20/C21 同一口径）。
+
+    SimpleNamespace 那条路没有 finish_reason 属性，正是中转站抖动时见过的残缺响应。
+    """
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        model="whatever",
+    )
+
+    assert _to_reply(response).api_finish_reason is None

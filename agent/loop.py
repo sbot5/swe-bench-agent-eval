@@ -69,6 +69,11 @@ class ModelReply:
 
     reasoning_content 同口径：**None = 没给，"" = 给了但是空的**。它和 content 是两回事 ——
     带 tool_calls 的那些轮 content 往往是空串，推理全在 reasoning_content 里（决定 C21）。
+
+    api_finish_reason 是**供应商说这一轮为什么停**（"stop" / "length" / "tool_calls" / ...）。
+    ⚠️ 不要和 EpisodeResult.finish_reason 混：那个是**模型自己调 finish 工具时写的理由**，
+    整条实例一个，早就落在 trajectory 顶层。两者同名不同义，所以这一列另起名（决定 C22）。
+    口径同上：**None = 供应商没给，"" = 给了个空串**。
     """
 
     content: str
@@ -81,6 +86,7 @@ class ModelReply:
     cache_miss_tokens: int | None = None
     reasoning_tokens: int | None = None
     reasoning_content: str | None = None
+    api_finish_reason: str | None = None
 
 
 class ModelClient(Protocol):
@@ -111,6 +117,9 @@ class StepRecord:
     reasoning_tokens: int | None = None
     # thought 那一列是 reply.content，带 tool_calls 时经常是空串；真正的推理在这里（决定 C21）
     reasoning_content: str | None = None
+    # 供应商说这一轮为什么停。"length" = 输出被 token 上限砍了，这一轮的 tool_args 可能只有半截。
+    # ⚠️ 与 trajectory 顶层的 finish_reason 同名不同义，见 ModelReply 的说明（决定 C22）
+    api_finish_reason: str | None = None
 
 
 @dataclass
@@ -534,6 +543,7 @@ def run_episode(
                 cache_miss_tokens=reply.cache_miss_tokens,
                 reasoning_tokens=reply.reasoning_tokens,
                 reasoning_content=reply.reasoning_content,
+                api_finish_reason=reply.api_finish_reason,
             ))
 
             # 5. 异常路径：连着错到阈值就停，而不是重试到死（决定 C10）

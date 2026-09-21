@@ -101,7 +101,8 @@ def _first_str(*values) -> str | None:
 
 def _to_reply(response) -> ModelReply:
     """把 litellm 的响应对象收敛成 ModelReply。算不出成本时记 0 并继续，不为了一个读数中断实例。"""
-    message = response.choices[0].message
+    choice = response.choices[0]
+    message = choice.message
 
     try:
         cost = float(litellm.completion_cost(completion_response=response))
@@ -132,4 +133,7 @@ def _to_reply(response) -> ModelReply:
         # **del 掉这个属性**（types/utils.py Message.__init__），所以 getattr 必须自带默认值，
         # 读到 None 就是「供应商没给」—— 不许拿 "" 冒充（决定 C21）。
         reasoning_content=_first_str(getattr(message, "reasoning_content", None)),
+        # 「这一轮的参数是不是被砍了半截」只可能在这里答。先只落盘不改行为（ⓐ′① 的判据）：
+        # 拿到真读数之前不知道该怎么处理，现在就整批作废 tool_calls 是在没有证据时改行为。
+        api_finish_reason=_first_str(getattr(choice, "finish_reason", None)),
     )

@@ -300,3 +300,46 @@ def test_reasoning_content_is_never_sent_back_to_the_model():
     assert client.calls >= 2, "要有第二轮，才看得到第一轮的 assistant 消息有没有进历史"
     sent = json.dumps(client.seen[-1], ensure_ascii=False)
     assert secret not in sent
+
+
+# ------------------------------------------------------------------ C22：api_finish_reason
+
+def test_api_finish_reason_reaches_the_step_record():
+    """供应商说的停止原因要一路走到 StepRecord —— 否则「参数是不是被砍了半截」永远查不了。"""
+    client = ScriptedClient([ModelReply(
+        content="", tool_calls=[call("read_file", path="a.py")], returned_model="fake",
+        api_finish_reason="length",
+    )])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    step = result.steps[0]
+    assert step.api_finish_reason == "length"
+    assert asdict(step)["api_finish_reason"] == "length"  # 落盘走的就是 asdict
+
+
+def test_a_reply_without_api_finish_reason_records_none():
+    """不给这一列时落 None，不落 "" —— 口径同 C20/C21。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=1)
+
+    assert result.steps[0].api_finish_reason is None
+
+
+def test_api_finish_reason_does_not_collide_with_the_finish_tool_reason():
+    """两个 finish_reason 同名不同义，必须各落各的（决定 C22）。
+
+    EpisodeResult.finish_reason = 模型调 finish 工具时**自己写的理由**，整条实例一个；
+    StepRecord.api_finish_reason = **供应商**说这一轮为什么停，每轮一个。
+    这条测试就是防止以后有人把它们合并成一列。
+    """
+    client = ScriptedClient([
+        ModelReply(content="", tool_calls=[call("read_file", path="a.py")],
+                   returned_model="fake", api_finish_reason="length"),
+        ModelReply(content="", tool_calls=[call("finish", reason="patch applied")],
+                   returned_model="fake", api_finish_reason="tool_calls"),
+    ])
+    result, _ = episode(client, {"read_file": ok_tool}, max_steps=4)
+
+    assert result.stop_reason == StopReason.FINISHED
+    assert result.finish_reason == "patch applied"
+    assert result.steps[0].api_finish_reason == "length"
