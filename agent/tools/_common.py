@@ -8,7 +8,7 @@ _validate_positive_int / _validate_legal_path 被 5 个工具用，_preview 被 
 import posixpath
 from typing import Final
 
-from agent.environment import REPO_ROOT
+from agent.environment import OVERFLOW_DIR, REPO_ROOT, TailResult
 from agent.observation import MAX_CONTENT_CHARS, FailureCategory, Observation
 
 DEFAULT_OFFSET: Final[int] = 1
@@ -30,6 +30,9 @@ DEFAULT_SCRIPT_TIMEOUT: Final[int] = 60
 MAX_SCRIPT_TIMEOUT: Final[int] = 300  # 比 run_tests 的 900 紧：一次性复现脚本不该跑几分钟（Y7）
 MAX_CODE_B64: Final[int] = 64 * 1024  # 与 MAX_NEW_STRING_B64 同理由（Y1）
 SCRIPT_PATH: Final[str] = "/tmp/agent_run_python.py"  # 写 /tmp 不写 /testbed，否则 git_diff 会列成未跟踪文件（Y9）
+# 完整输出落在 OVERFLOW_DIR 下的这个文件。**每次覆盖**：模型要读的总是刚刚那一次，
+# 保留历史就要管清理，而容器本来就是一条实例一个、跑完即删（Y12）
+SCRIPT_LOG_NAME: Final[str] = "run_python.log"
 MAX_SCRIPT_OUTPUT_CHARS: Final[int] = MAX_CONTENT_CHARS  # 工具层就截断，不把整份交给 Observation（Y6）
 _TOP_FILES: Final[int] = 5
 _MAX_SELECTED_FILES: Final[int] = 400  # 每个文件至少占「文件名 + 1 行」约 25 字符，预算装不下更多；也让命令远离 128KB 单参数上限
@@ -65,8 +68,15 @@ def _validate_positive_int(name: str, val: object, default_val: int, args_contex
     return None
 
 
-def _validate_legal_path(path: object, args_context: str) -> str | Observation:
-    """校验路径是否合法"""
+def _validate_legal_path(path: object, args_context: str, *,
+                         allow_overflow: bool = False) -> str | Observation:
+    """校验路径是否合法。
+
+    allow_overflow 只给 read_file 开（Y12）：溢写日志在 OVERFLOW_DIR，那是 REPO_ROOT **之外**
+    —— 放仓库里的话 git_diff 会把它列成未跟踪文件（Y9 当初把脚本挪出去就是这个理由）。
+    口子开得尽量窄：只放行那一个目录下的路径，其余 5 个调用方一个字都不动，
+    尤其 apply_patch 拿不到这个开关 —— 模型能读那份输出，但改不了它。
+    """
     if type(path) is not str:
         return Observation.error(
             failure_category=FailureCategory.INVALID_ARGUMENT,
@@ -98,6 +108,10 @@ def _validate_legal_path(path: object, args_context: str) -> str | Observation:
     full_path = posixpath.normpath(
         posixpath.join(REPO_ROOT, path)
     )
+
+    # 溢写日志的例外：路径由我们自己拼（environment.execute_to_file），模型只是把它抄回来
+    if allow_overflow and full_path.startswith(OVERFLOW_DIR + "/"):
+        return full_path
 
     if full_path != REPO_ROOT and not full_path.startswith(REPO_ROOT + "/"):
         return Observation.error(
@@ -146,3 +160,25 @@ def _keep_tail(text: str, limit: int) -> str:
         "of output; the tail is kept because failures and the summary are printed last]"
     )
     return f"{notice}\n\n{kept}" if kept else notice
+
+
+def _tail_with_path(result: TailResult) -> str:
+    """尾部 + 被截断时「丢了多少、完整的那份在哪」（Y12）。
+
+    和 _keep_tail 的分工：截断已经在**容器里**做完了（execute_to_file 的 tail -c），
+    这里只负责把丢掉的量和取回的路径写给模型 —— 截断从此是**可恢复**的，
+    不再只是「保护上下文」。路径在 REPO_ROOT 下，read_file 的白名单放行。
+
+    单位是**字节**不是字符：截断是 tail -c 做的，这里报 chars 会对不上账。
+    """
+    if not result.truncated:
+        return result.tail
+
+    dropped = result.total_bytes - len(result.tail.encode())
+    notice = (
+        f"[TRUNCATED: dropped the first {dropped} of {result.total_bytes} bytes of output; "
+        f"the tail is kept because failures and the summary are printed last. "
+        f"The complete output is in the container at {result.path} — "
+        f"read_file that path if you need the part that was dropped.]"
+    )
+    return f"{notice}\n\n{result.tail}" if result.tail else notice

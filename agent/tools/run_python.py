@@ -13,9 +13,11 @@ from agent.tools._common import (
     MAX_CODE_B64,
     MAX_SCRIPT_OUTPUT_CHARS,
     MAX_SCRIPT_TIMEOUT,
+    SCRIPT_LOG_NAME,
     SCRIPT_PATH,
     _keep_tail,
     _preview,
+    _tail_with_path,
     _validate_positive_int,
 )
 
@@ -101,31 +103,41 @@ def run_python(
             ],
         )
 
-    # 4. 在 testbed 环境里跑；stderr 并进 stdout，traceback 和 print 的相对顺序才是对的（同 T3）
-    exec_result = env.execute(f"( {CONDA_ACTIVATE} && python {quoted_script} ) 2>&1", timeout=timeout)
-
     run_ctx = f"Current args: {args_ctx}, script written to {SCRIPT_PATH}"
 
+    # 4. 在 testbed 环境里跑；stderr 并进 stdout，traceback 和 print 的相对顺序才是对的（同 T3）。
+    #    **完整输出留在容器里**（Y12）：execute() 是 capture_output=True，整份 stdout 会先进
+    #    宿主机内存，而 run_python 是唯一能产生任意大输出的工具（P1 实测 mini 两条 trajectory
+    #    各 204MB）。改走 execute_to_file 之后，宿主机峰值才真的有上界 —— 原来的 _keep_tail
+    #    只是不再复制第二份，那一份早就在内存里了。
+    #    顺带把截断变成**可恢复的**：丢掉的那段还在容器里，模型能用 read_file 取回。
+    budget = max(0, MAX_SCRIPT_OUTPUT_CHARS - len(run_ctx) - 4)
+    exec_result = env.execute_to_file(
+        f"{CONDA_ACTIVATE} && python {quoted_script}",
+        log_name=SCRIPT_LOG_NAME,
+        tail_bytes=budget,
+        timeout=timeout,
+    )
+
     # 5. 超时先判。脚本自己非零退出是正常返回，不在这里分派（同 T6）
+    #    超时这条路现在也能拿到输出：容器里的文件照读，不依赖 TimeoutExpired 那份 partial output
     if exec_result.timed_out:
         return Observation.error(
             failure_category=FailureCategory.TIMEOUT,
             summary=f"The script timed out after {timeout}s",
-            content=f"{run_ctx}\n\n{_keep_tail(exec_result.stdout, MAX_CONTENT_CHARS // 2)}",
+            content=f"{run_ctx}\n\n{_tail_with_path(exec_result)}",
             next_actions=[
                 "The script did not finish: make it do less, or add a print so you can see where it stops.",
                 "If it looks like an infinite loop caused by your own edit, re-read the edit instead of rerunning.",
             ],
         )
 
-    # 6. 截断在**工具层**做，不留给 Observation（Y6）：run_python 是唯一能产生任意大输出的工具，
-    #    而 observation 的截断只保护上下文、不保护落盘（P1 实测 mini 两条 trajectory 各 204MB）
-    budget = max(0, MAX_SCRIPT_OUTPUT_CHARS - len(run_ctx) - 4)
-    output = _keep_tail(exec_result.stdout, budget)
+    # 6. 截断已经在容器里做完了（Y12），这里只把「丢了多少 + 去哪读完整的那份」写给模型
+    output = _tail_with_path(exec_result)
     blocks = [run_ctx, output if output.strip() else "(the script produced no output)"]
 
-    # 7. 不判断脚本「成功」，只如实报退出码（Y4、Y11）
-    produced = f"{len(exec_result.stdout)} chars of output"
+    # 7. 不判断脚本「成功」，只如实报退出码（Y4、Y11）。单位随截断口径改成字节（Y12）
+    produced = f"{exec_result.total_bytes} bytes of output"
     if exec_result.exit_code == 0:
         summary = f"Script finished with exit code 0 ({produced})"
         next_actions = [
@@ -144,5 +156,12 @@ def run_python(
                 "not the repository."
             ),
         ]
+
+    # 截断时多给一条路：丢掉的那段不是没了，是在容器里（Y12）
+    if exec_result.truncated:
+        next_actions.append(
+            f"Only the tail is shown; the complete output is at {exec_result.path} "
+            f"— read_file that path if you need the earlier part."
+        )
 
     return Observation.ok(summary=summary, content="\n\n".join(blocks), next_actions=next_actions)

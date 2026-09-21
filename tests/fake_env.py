@@ -6,12 +6,17 @@
 """
 from collections.abc import Callable, Sequence
 
-from agent.environment import ExecResult
+from agent.environment import DockerEnvironment, ExecResult
 
 
 def ok(stdout: str = "", stderr: str = "", exit_code: int = 0, duration: float = 0.01) -> ExecResult:
     """造一条正常返回的执行结果。"""
     return ExecResult(stdout=stdout, stderr=stderr, timed_out=False, duration=duration, exit_code=exit_code)
+
+
+def tail_probe(total_bytes: int, tail: str = "") -> ExecResult:
+    """造 execute_to_file 第二条命令（`wc -c` && `tail -c`）的返回：第一行是字节数，其余是尾部。"""
+    return ok(stdout=f"{total_bytes}\n{tail}")
 
 
 def timed_out(duration: float = 60.0) -> ExecResult:
@@ -38,6 +43,10 @@ class FakeEnvironment:
         result = self._results[self._index]
         self._index += 1
         return result
+
+    # 走**真**实现，只有 execute 是假的（Y12）：命令怎么拼、`wc -c` 那一行怎么解析、
+    # 超时那条路还读不读文件 —— 这些都是要测的逻辑，在假 env 里重写一遍等于不测
+    execute_to_file = DockerEnvironment.execute_to_file
 
     @property
     def exhausted(self) -> bool:

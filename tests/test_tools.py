@@ -12,7 +12,8 @@ import base64
 
 import pytest
 
-from agent.observation import FailureCategory, ToolStatus
+from agent.environment import OVERFLOW_DIR
+from agent.observation import FailureCategory, Observation, ToolStatus
 from agent.tools import (
     _aggregate,
     _closest_lines,
@@ -27,6 +28,7 @@ from agent.tools import (
     _render_lines,
     _split_test_targets,
     _squeeze_whitespace,
+    _validate_legal_path,
     apply_patch,
     git_diff,
     list_files,
@@ -35,7 +37,7 @@ from agent.tools import (
     run_tests,
     search_code,
 )
-from tests.fake_env import FakeEnvironment, ok, timed_out
+from tests.fake_env import FakeEnvironment, ok, tail_probe, timed_out
 
 # --------------------------------------------------------------------- 纯函数
 
@@ -260,7 +262,8 @@ def test_git_diff_survives_an_unreadable_untracked_listing():
          [ok(stdout="PASSED a", exit_code=2)], FailureCategory.UNCLASSIFIED),
         (lambda env: run_python(env, ""), [], FailureCategory.INVALID_ARGUMENT),
         (lambda env: run_python(env, "print(1)", timeout=99999), [], FailureCategory.INVALID_ARGUMENT),
-        (lambda env: run_python(env, "print(1)"), [ok(), timed_out()], FailureCategory.TIMEOUT),
+        # 超时后还有第三条命令：容器里的文件照读，能拿回多少算多少（Y12）
+        (lambda env: run_python(env, "print(1)"), [ok(), timed_out(), tail_probe(0)], FailureCategory.TIMEOUT),
         (lambda env: run_python(env, "print(1)"), [ok(exit_code=1)], FailureCategory.UNCLASSIFIED),
         (lambda env: git_diff(env, "/etc"), [], FailureCategory.PATH_OUTSIDE_ROOT),
     ],
@@ -342,17 +345,19 @@ def test_model_written_arguments_are_quoted_before_they_reach_the_shell():
 
 
 def test_run_python_reports_the_exit_code_it_actually_got():
-    env = FakeEnvironment([ok(), ok(stdout="value is 3\n", exit_code=0)])
+    out = "value is 3\n"
+    env = FakeEnvironment([ok(), ok(exit_code=0), tail_probe(len(out.encode()), out)])
     obs = run_python(env, "print('value is', 3)")
     assert obs.status == ToolStatus.OK
     assert obs.summary.startswith("Script finished with exit code 0")
     assert "value is 3" in obs.content
-    assert env.exhausted  # 就两条命令：写脚本、跑脚本
+    assert env.exhausted  # 三条命令：写脚本、跑脚本（输出重定向进容器里的文件）、取字节数和尾部
 
 
 def test_run_python_is_ok_when_the_script_itself_raises():
     """脚本挂了是工具完成了它的活，不是工具失败（Y4，同 T6）。"""
-    env = FakeEnvironment([ok(), ok(stdout='Traceback:\nValueError: boom\n', exit_code=1)])
+    out = "Traceback:\nValueError: boom\n"
+    env = FakeEnvironment([ok(), ok(exit_code=1), tail_probe(len(out.encode()), out)])
     obs = run_python(env, "raise ValueError('boom')")
     assert obs.status == ToolStatus.OK
     assert obs.summary.startswith("Script exited with code 1")
@@ -365,7 +370,7 @@ def test_run_python_does_not_mistake_the_scripts_own_exit_code_for_a_write_failu
 
     单条命令加 `|| exit 94`（apply_patch 的写法）在这里就会误判 —— 那边 94 之后不再跑用户代码。
     """
-    env = FakeEnvironment([ok(), ok(stdout="", exit_code=94)])
+    env = FakeEnvironment([ok(), ok(exit_code=94), tail_probe(0)])
     obs = run_python(env, "import sys; sys.exit(94)")
     assert obs.status == ToolStatus.OK
     assert obs.summary.startswith("Script exited with code 94")
@@ -381,7 +386,7 @@ def test_run_python_stops_before_running_when_the_script_cannot_be_written():
 def test_run_python_never_puts_the_script_on_the_command_line():
     """code 是模型写的，只能 base64 送进去（Y1，同 P5）。"""
     code = "print('a'); import os; os.system('rm -rf /')"
-    env = FakeEnvironment([ok(), ok(stdout="a\n")])
+    env = FakeEnvironment([ok(), ok(), tail_probe(2, "a\n")])
     run_python(env, code)
     assert code not in env.commands[0]
     assert "rm -rf /" not in env.commands[0]
@@ -392,25 +397,68 @@ def test_run_python_never_puts_the_script_on_the_command_line():
 
 
 def test_run_python_writes_outside_the_repo_so_git_diff_stays_clean():
-    """脚本落在 /tmp，不落 /testbed —— 否则 git_diff 会把它列成未跟踪文件（Y9）。"""
-    env = FakeEnvironment([ok(), ok()])
+    """脚本和溢写日志都落在 /tmp，不落 /testbed —— 否则 git_diff 会把它们列成未跟踪文件（Y9、Y12）。"""
+    env = FakeEnvironment([ok(), ok(), tail_probe(0)])
     run_python(env, "print(1)")
     assert "/tmp/agent_run_python.py" in env.commands[0]
     assert "/testbed" not in env.commands[0]
+    # 重定向和取尾部这两条也不许把文件落进仓库，否则 Y9 的理由在 Y12 上重新破一次
+    assert "/tmp/agent-overflow/run_python.log" in env.commands[1]
+    assert "/testbed" not in env.commands[1]
+    assert "/testbed" not in env.commands[2]
 
 
 def test_run_python_says_so_when_the_script_printed_nothing():
-    env = FakeEnvironment([ok(), ok(stdout="")])
+    env = FakeEnvironment([ok(), ok(), tail_probe(0)])
     obs = run_python(env, "pass")
     assert obs.status == ToolStatus.OK
     assert "no output" in obs.content
 
 
-def test_run_python_truncates_a_huge_output_at_the_tool_layer():
-    """Y6：截断在工具层做，不留给 observation —— 它只保护上下文、不保护落盘。"""
-    env = FakeEnvironment([ok(), ok(stdout="x" * 500_000 + "THE END")])
+def test_run_python_truncates_a_huge_output_in_the_container():
+    """Y12：截断在**容器里**做 —— 宿主机只拿回尾部，整份输出从来没进过宿主机内存。
+
+    原来（Y6）截断在工具层：execute 的 capture_output 先把 500KB 读进宿主机，_keep_tail 才切。
+    现在假 env 回的就是 `tail -c` 已经切好的那一段，整份输出只存在于容器里那个文件。
+    """
+    kept = "x" * 9_000 + "THE END"
+    env = FakeEnvironment([ok(), ok(), tail_probe(500_007, kept)])
     obs = run_python(env, "print('x' * 500_000)")
+
     assert len(obs.content) < 100_000
+    assert "THE END" in obs.content, "留的是尾部，失败和统计都印在最后"
+    assert "500007 bytes" in obs.summary, "summary 报的是**完整**输出的大小，不是拿回来那点"
+    # 丢掉的那段不是没了：告诉模型它在哪，并给一条可执行的取回路径
+    assert "/tmp/agent-overflow/run_python.log" in obs.content
+    assert any("read_file" in action for action in obs.next_actions)
     assert obs.content.endswith("THE END")
     assert "TRUNCATED" in obs.content
-    assert "500007 chars of output" in obs.summary, "报的是脚本真实输出量，不是截断后的量"
+
+
+def test_the_overflow_exception_is_narrow():
+    """Y12 给 read_file 开的口子只放行一个目录，且只对带开关的调用方生效。
+
+    这条是安全边界的测试，不是功能测试：溢写日志在 REPO_ROOT 之外（理由见 OVERFLOW_DIR），
+    白名单因此必须退让一步 —— 退让多少，由这条钉死。
+    """
+    log = f"{OVERFLOW_DIR}/run_python.log"
+
+    # read_file 那条路：放行，拿到归一化后的绝对路径
+    assert _validate_legal_path(log, "ctx", allow_overflow=True) == log
+
+    # 默认不带开关 —— 其余 5 个工具照旧拒绝，尤其 apply_patch 读得到也改不了那份输出
+    denied = _validate_legal_path(log, "ctx")
+    assert isinstance(denied, Observation)
+    assert denied.failure_category == FailureCategory.PATH_OUTSIDE_ROOT
+
+    # 开关不等于「放行整个 /tmp」：邻居目录、前缀相同的目录、目录本身、穿越，全都不行
+    for outside in [
+        "/tmp/agent_run_python.py",          # run_python 的脚本，不是它的输出
+        "/tmp/passwd",
+        f"{OVERFLOW_DIR}-evil/x",            # 前缀相同但不是同一个目录
+        OVERFLOW_DIR,                        # 目录本身不是文件
+        f"{OVERFLOW_DIR}/../../etc/passwd",  # normpath 之后就不在里面了
+    ]:
+        result = _validate_legal_path(outside, "ctx", allow_overflow=True)
+        assert isinstance(result, Observation), f"should have been denied: {outside}"
+        assert result.failure_category == FailureCategory.PATH_OUTSIDE_ROOT, outside

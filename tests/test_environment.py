@@ -9,7 +9,8 @@ import subprocess
 
 import pytest
 
-from agent.environment import REPO_ROOT, DockerEnvironment, ExecResult, _safe_decode
+from agent.environment import OVERFLOW_DIR, REPO_ROOT, DockerEnvironment, ExecResult, _safe_decode
+from tests.fake_env import FakeEnvironment, ok, tail_probe, timed_out
 
 IMAGE = "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"
 
@@ -60,6 +61,51 @@ def test_a_missing_image_fails_with_the_reason_not_just_the_exit_code():
 
 
 # ------------------------------------------------------------------ 真容器
+
+# ------------------------------------------------------- execute_to_file（决定 31）
+
+def test_execute_to_file_keeps_the_whole_output_in_the_container():
+    """宿主机只拿回尾部：命令自己重定向进文件，第二条才把字节数和尾部取回来。"""
+    env = FakeEnvironment([ok(), tail_probe(500_000, "the tail")])
+    result = DockerEnvironment.execute_to_file(env, "python x.py", log_name="run_python.log",
+                                               tail_bytes=100)
+
+    assert result.tail == "the tail"
+    assert result.total_bytes == 500_000
+    assert result.truncated, "500KB 装不进 100 字节的预算"
+    assert result.path == f"{OVERFLOW_DIR}/run_python.log"
+    # 第一条命令负责重定向，输出一个字都不回宿主机
+    assert env.commands[0].endswith(f"> {result.path} 2>&1")
+    assert "tail -c 100" in env.commands[1]
+
+
+def test_execute_to_file_still_reads_the_log_after_a_timeout():
+    """超时那条路正是最需要看输出的时候：容器里的进程还在写，能读回多少算多少。"""
+    env = FakeEnvironment([timed_out(), tail_probe(9, "partial\n")])
+    result = DockerEnvironment.execute_to_file(env, "sleep 999", log_name="run_python.log",
+                                               tail_bytes=100)
+
+    assert result.timed_out and result.exit_code is None
+    assert "partial" in result.tail, "超时不该把已经产生的输出一起丢掉"
+
+
+def test_execute_to_file_does_not_invent_a_size_it_could_not_read():
+    """`wc -c` 那一行读不出来时 total_bytes 记 0，不拿一个编出来的数去算「丢了多少」（同 C20）。"""
+    env = FakeEnvironment([ok(), ok(stdout="not-a-number\nwhatever")])
+    result = DockerEnvironment.execute_to_file(env, "true", log_name="x.log", tail_bytes=100)
+
+    assert result.total_bytes == 0
+    assert result.tail == "", "读不出字节数就连尾部也不敢当真"
+    assert not result.truncated
+
+
+def test_execute_to_file_rejects_a_log_name_that_is_not_an_identifier():
+    """log_name 由我们自己传，不是模型参数 —— 但它会拼进命令，所以在这里挡住（决定 23 的边界）。"""
+    env = FakeEnvironment([])
+    for bad in ["../escape", "a b", "x;rm -rf /", ""]:
+        with pytest.raises(ValueError):
+            DockerEnvironment.execute_to_file(env, "true", log_name=bad, tail_bytes=100)
+
 
 pytest_slow = pytest.mark.slow
 

@@ -36,7 +36,9 @@ def read_file(
             return err
 
     # 2. 路径：通过则拿到归一化后的绝对路径（决定 7–11）
-    path_validate_result = _validate_legal_path(path, args_ctx)
+    #    allow_overflow 是 read_file 独有的窄口子（Y12）：工具输出被截断时，完整的那份写在
+    #    OVERFLOW_DIR（REPO_ROOT 之外，理由见那个常量），模型得能把丢掉的部分读回来
+    path_validate_result = _validate_legal_path(path, args_ctx, allow_overflow=True)
     if isinstance(path_validate_result, Observation):
         return path_validate_result
 

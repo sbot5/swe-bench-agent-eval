@@ -4,6 +4,7 @@
 容器事实、决定、实测、已纠正的错误：docs/DESIGN-environment.md
 残留容器：docker rm -f $(docker ps -aq --filter name=swebench-agent-)
 """
+import shlex
 import subprocess
 import sys
 import time
@@ -13,6 +14,11 @@ from typing import Final, Self
 
 # 容器内仓库根。execute() 的 -w 和 tools 包 的路径白名单共用，同一事实一个来源
 REPO_ROOT: Final = "/testbed"
+
+# 工具的完整输出溢写到这里（决定 31）。**在 REPO_ROOT 之外**，理由同 Y9：放仓库里的话
+# git_diff 会把它列成未跟踪文件（git_diff.py:47-54 会列 untracked），污染模型的自查视图。
+# 代价是 read_file 的路径白名单要为它开一个窄口子（_common._validate_legal_path 的 allow_overflow）。
+OVERFLOW_DIR: Final = "/tmp/agent-overflow"
 
 @dataclass(frozen=True)
 class ExecResult:
@@ -34,6 +40,26 @@ class ExecResult:
         else:
             if self.exit_code is None:
                 raise ValueError("Exit code must be existed as int if time not out")
+
+@dataclass(frozen=True)
+class TailResult:
+    """完整输出留在容器里、只把尾部带回宿主机的执行结果（决定 31）。
+
+    与 ExecResult 的区别只有一条：tail **不是**完整输出，是 tail_bytes 预算内的尾部。
+    total_bytes 是容器里那份的真实大小，path 是它的容器内路径 —— 模型能用 read_file 读回去。
+    stderr 没有单独一列：execute_to_file 把两条流并进同一个文件（顺序才是对的，同 T3）。
+    """
+    tail: str
+    total_bytes: int
+    path: str
+    timed_out: bool
+    duration: float
+    exit_code: int | None = None
+
+    @property
+    def truncated(self) -> bool:
+        """尾部没装下全部输出。按**字节**比，因为截断是容器里的 tail -c 做的。"""
+        return self.total_bytes > len(self.tail.encode())
 
 class DockerEnvironment:
     """一条实例一个容器的完整生命周期。必须用 with：
@@ -190,6 +216,56 @@ class DockerEnvironment:
                 duration=duration,
                 exit_code=None,
             )
+
+    def execute_to_file(self, cmd: str, *, log_name: str, tail_bytes: int,
+                        timeout: int = 60) -> TailResult:
+        """跑一条命令，**完整输出留在容器内的文件里**，宿主机只取尾部（决定 31）。
+
+        为什么不用 execute()：它是 capture_output=True，整份 stdout 先进宿主机内存
+        （P1 实测 mini 单条 trajectory 到 204MB）。这里让容器自己重定向到文件，
+        宿主机只 `tail -c` 取预算内的那一段，峰值内存因此有上界 —— 这是真的上界，
+        不是「少复制一份」：_keep_tail 截断的时候，那一份早就在内存里了。
+
+        超时也照样去读那个文件：超时只杀宿主机上的 docker exec 客户端，容器里的进程还在写，
+        能读回多少算多少（比 TimeoutExpired 那份 partial output 完整，DESIGN-environment §七）。
+
+        log_name 必须是纯标识符。这一层仍然不做 allowlist（决定 23）—— cmd 里的模型参数由
+        tools 包 quote 好再传进来；这里 quote 的只有我们自己的常量路径。
+        """
+        if not log_name or not log_name.replace("-", "").replace("_", "").replace(".", "").isalnum():
+            raise ValueError(f"log_name must be a plain identifier, got: {log_name!r}")
+
+        path = f"{OVERFLOW_DIR}/{log_name}"
+        quoted_path = shlex.quote(path)
+
+        # 大括号里要用 `;` 收尾，否则 `{ cmd }` 是语法错；退出码仍是 cmd 自己的
+        run_result = self.execute(
+            f"mkdir -p {shlex.quote(OVERFLOW_DIR)} && {{ {cmd} ; }} > {quoted_path} 2>&1",
+            timeout=timeout,
+        )
+
+        # 无论成败都去读：超时那条路正是最需要看输出的时候
+        probe = self.execute(f"wc -c < {quoted_path} && tail -c {tail_bytes} {quoted_path}", timeout=60)
+
+        total_bytes, tail = 0, ""
+        if not probe.timed_out and probe.exit_code == 0:
+            # 第一行是 wc -c 的字节数，其余是尾部本身（尾部可能以空行开头，partition 只吃第一个 \n）
+            counted, _, rest = probe.stdout.partition("\n")
+            try:
+                total_bytes = int(counted.strip())
+            except ValueError:
+                total_bytes = 0  # 读不出就当没读到，不拿一个编出来的数去算「丢了多少」
+            else:
+                tail = rest
+
+        return TailResult(
+            tail=tail,
+            total_bytes=total_bytes,
+            path=path,
+            timed_out=run_result.timed_out,
+            duration=run_result.duration,
+            exit_code=run_result.exit_code,
+        )
 
 def _safe_decode(raw: str | bytes | None) -> str:
     """把 None / bytes / str 统一成 str：None -> ""，bytes 按 UTF-8 解码、非法字节替换（决定 26）。
