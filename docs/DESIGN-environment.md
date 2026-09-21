@@ -109,6 +109,18 @@ Docker 容器       /testbed，仓库停在 base_commit
 | --- | --- | --- |
 | 32 | 大输出的命令走 `execute_to_file`：容器里自己重定向进文件，宿主机只 `tail -c` 取预算内的尾部；`execute()` 一行不动 | `execute()` 是 `capture_output=True`，整份 stdout 先进宿主机内存（P1 实测 mini 单条 trajectory 到 204MB）；`_keep_tail` 是**截断之后**才做的，那一份早就在内存里了。**09-21 实测**：50MB 输出走新路径，宿主机峰值 **+0.0 MB**。溢写文件放 `/tmp/agent-overflow`（**不**放 `/testbed`，理由同 Y9：`git_diff` 会把它列成未跟踪文件）。代价是 `read_file` 的路径白名单要开一个窄口子，见 `DESIGN-tools.md` Y12 |
 
+**⚠️ 决定 32 的第一版有三处错，2026-09-21 当天由 Codex 只读审稿抓出并修掉（不静默改，留在这里）：**
+
+| # | 第一版怎么写的 | 错在哪 | 改成什么 |
+| --- | --- | --- | --- |
+| MAJOR-1 | `allow_overflow` 按**目录**前缀放行（`full_path.startswith(OVERFLOW_DIR + "/")`） | 模型用 `run_python` 能往那个目录写文件再 `read_file` 读回来 —— 等于自己造出一条绕过 `REPO_ROOT` 白名单的路。**它本来就能用 `run_python` 读任意文件，但那是它自己的能力，白名单不该跟着松一格** | `OVERFLOW_LOGS` 逐个列出允许的日志名；`execute_to_file` 只收清单里的名字，**写得进去的和读得回来的永远是同一份** |
+| MAJOR-2 | 超时后照样 `wc -c && tail -c`，`dropped = total_bytes - len(tail.encode())` | 超时只杀宿主机客户端、容器里还在写：`wc` 读到旧值、`tail` 取更晚的文件，**`dropped` 能算出负数**并写给模型 | `dropped` 改走预算（`total_bytes - tail_bytes`），必然非负；`timed_out` 时观察里显式写「这个大小是快照不是终值」 |
+| MAJOR-3 | `truncated` 判 `total_bytes > len(self.tail.encode())` | `tail -c` 按字节切，切在多字节字符中间时 `errors="replace"` 把残字节换成 U+FFFD（UTF-8 下 3 字节），重新 `.encode()` 的长度和容器里取回的原始字节数对不上 | `TailResult` 加 `tail_bytes`，判 `total_bytes > tail_bytes` —— `tail -c N` 取回的就是最后 `min(N, total)` 字节，**判据不依赖解码** |
+
+MINOR（不改逻辑）：超时那条路最坏多等 60 秒（probe 自己的超时），**最坏总耗时 = `timeout` + 60**。有意为之，理由写在 `execute_to_file` 的 docstring 里。
+
+**可讲的一条**：这三处**单测全绿、真容器验收四条判据也全过**之后才被审出来 —— 它们都不在我写的那些断言覆盖的区间里（测试用的全是 ASCII、非超时、单一日志名）。**测试绿不等于口径对。**
+
 ⚠️ **这一条只改了 `run_python` 那条路。** `run_tests` 仍走 `execute()`；`read_file` 读一个超长单行文件时宿主机峰值同样会爆（09-21 实测 50MB 单行 **+190.9 MB**）。「输出不进宿主机内存」目前**不是**这一层的普遍保证，只是 `run_python` 的保证 —— 见「已知边界」。
 
 ### 逐个对象的展开（2026-09-15 从 docstring 外移）
