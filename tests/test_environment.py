@@ -62,7 +62,7 @@ def test_a_missing_image_fails_with_the_reason_not_just_the_exit_code():
 
 # ------------------------------------------------------------------ 真容器
 
-# ------------------------------------------------------- execute_to_file（决定 31）
+# ------------------------------------------------------- execute_to_file（决定 32）
 
 def test_execute_to_file_keeps_the_whole_output_in_the_container():
     """宿主机只拿回尾部：命令自己重定向进文件，第二条才把字节数和尾部取回来。"""

@@ -49,7 +49,7 @@ Docker 容器       /testbed，仓库停在 base_commit
 - `execute()` —— 跑一条命令，返回 `ExecResult`
 - `cleanup()` —— 销毁容器（`__exit__` 调）
 
-## 四、决策清单（32 条；29–31 是 09-15 外移 docstring 时补录的，原先只写在代码里）
+## 四、决策清单（33 条；29–31 是 09-15 外移 docstring 时补录的，原先只写在代码里；32 是 09-21 加的 `execute_to_file`）
 
 ### ExecResult（7 条）
 
@@ -102,6 +102,14 @@ Docker 容器       /testbed，仓库停在 base_commit
 | 27 | `time.monotonic()` 不用 `time.time()` | 墙上时钟会被 NTP 校时调整，极端情况下 duration 算出负数 |
 | 28 | 容器没起来抛 `RuntimeError`，**不用 `assert`** | 否决 mini 的 `assert self.container_id`（`docker.py:105`）—— `python -O` 会把 assert 整个编译掉。assert 是给内部不变量的，「忘了用 with」是调用方会犯的错。和 `ExecResult.__post_init__` 用 `ValueError` 是同一个判断 |
 | 29 | `execute(timeout=60)` | 与 mini 的 `swebench.yaml` 一致 —— **控制变量**：这不是本项目的实验变量，不要动（同 `DESIGN-observation.md` 决定 22） |
+
+### execute_to_file（1 条，2026-09-21 加）
+
+| # | 决定 | 判据 |
+| --- | --- | --- |
+| 32 | 大输出的命令走 `execute_to_file`：容器里自己重定向进文件，宿主机只 `tail -c` 取预算内的尾部；`execute()` 一行不动 | `execute()` 是 `capture_output=True`，整份 stdout 先进宿主机内存（P1 实测 mini 单条 trajectory 到 204MB）；`_keep_tail` 是**截断之后**才做的，那一份早就在内存里了。**09-21 实测**：50MB 输出走新路径，宿主机峰值 **+0.0 MB**。溢写文件放 `/tmp/agent-overflow`（**不**放 `/testbed`，理由同 Y9：`git_diff` 会把它列成未跟踪文件）。代价是 `read_file` 的路径白名单要开一个窄口子，见 `DESIGN-tools.md` Y12 |
+
+⚠️ **这一条只改了 `run_python` 那条路。** `run_tests` 仍走 `execute()`；`read_file` 读一个超长单行文件时宿主机峰值同样会爆（09-21 实测 50MB 单行 **+190.9 MB**）。「输出不进宿主机内存」目前**不是**这一层的普遍保证，只是 `run_python` 的保证 —— 见「已知边界」。
 
 ### 逐个对象的展开（2026-09-15 从 docstring 外移）
 
@@ -243,6 +251,10 @@ ls /testbed | head  → FileNotFoundError
 - **`container_timeout=2h` 与 `max_steps` 的跨文件约束**：`2h > max_steps × execute timeout + max_steps × LLM 延迟`。按 60s / 40 步 / 8s 估 ≈ 45 分钟，余量 2.6 倍。**`loop.py` 定 `max_steps` 时回来核对**
 - **软链接逃逸**：`tools.py` 的路径检查用 Python 侧 `posixpath.normpath`（只防 `../`，0 次 execute）。容器里 `realpath` 能连软链接一起解析，但模型没有造软链接的动机，不值得为它多一次调用
 - `ExecResult` 五个字段全是位置参数，`stdout`/`stderr` 相邻且同为 `str` —— 写反了类型检查器不吭声。只在 `execute()` 一处构造，暂不加 `*`
+- ⚠️ **「输出不进宿主机内存」只覆盖了 `run_python`（2026-09-21）**。决定 32 修的是产出大输出的那一侧，另外两个部位仍在：
+  - `read_file` 读**超长单行**文件时，`awk` 把整行吐给 `execute()` —— 09-21 实测读那份 50MB 单行日志，宿主机峰值 **+190.9 MB**（同一次验收里 `run_python` 只 +0.0 MB）。它有行数和字符预算，但预算是在**输出已经回到宿主机之后**才生效的，和 `_keep_tail` 当初那个坑一模一样
+  - `run_tests` 仍走 `execute()`。它的输出受测试套件规模约束，不是任意大，所以排在后面
+  → 所以**不要**把「决定 32」读成「这一层现在不会爆内存了」。它现在的保证是：**模型主动 print 出来的东西**不会爆。
 
 ### 压在 tools.py 上的四条义务（机器强制不了）
 

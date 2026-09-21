@@ -15,7 +15,7 @@ from typing import Final, Self
 # 容器内仓库根。execute() 的 -w 和 tools 包 的路径白名单共用，同一事实一个来源
 REPO_ROOT: Final = "/testbed"
 
-# 工具的完整输出溢写到这里（决定 31）。**在 REPO_ROOT 之外**，理由同 Y9：放仓库里的话
+# 工具的完整输出溢写到这里（决定 32）。**在 REPO_ROOT 之外**，理由同 Y9：放仓库里的话
 # git_diff 会把它列成未跟踪文件（git_diff.py:47-54 会列 untracked），污染模型的自查视图。
 # 代价是 read_file 的路径白名单要为它开一个窄口子（_common._validate_legal_path 的 allow_overflow）。
 OVERFLOW_DIR: Final = "/tmp/agent-overflow"
@@ -43,7 +43,7 @@ class ExecResult:
 
 @dataclass(frozen=True)
 class TailResult:
-    """完整输出留在容器里、只把尾部带回宿主机的执行结果（决定 31）。
+    """完整输出留在容器里、只把尾部带回宿主机的执行结果（决定 32）。
 
     与 ExecResult 的区别只有一条：tail **不是**完整输出，是 tail_bytes 预算内的尾部。
     total_bytes 是容器里那份的真实大小，path 是它的容器内路径 —— 模型能用 read_file 读回去。
@@ -219,7 +219,7 @@ class DockerEnvironment:
 
     def execute_to_file(self, cmd: str, *, log_name: str, tail_bytes: int,
                         timeout: int = 60) -> TailResult:
-        """跑一条命令，**完整输出留在容器内的文件里**，宿主机只取尾部（决定 31）。
+        """跑一条命令，**完整输出留在容器内的文件里**，宿主机只取尾部（决定 32）。
 
         为什么不用 execute()：它是 capture_output=True，整份 stdout 先进宿主机内存
         （P1 实测 mini 单条 trajectory 到 204MB）。这里让容器自己重定向到文件，
