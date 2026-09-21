@@ -1,0 +1,84 @@
+{
+  "instance_id": "pydata__xarray-4356",
+  "stop_reason": "finished",
+  "finish_reason": "gold patch replayed",
+  "error": "",
+  "total_cost": 0.0,
+  "total_duration": 0.11712117600001193,
+  "api_calls": 2,
+  "model_patch": "diff --git a/xarray/core/nanops.py b/xarray/core/nanops.py\nindex 41c8d258..bc7dc510 100644\n--- a/xarray/core/nanops.py\n+++ b/xarray/core/nanops.py\n@@ -26,13 +26,9 @@ def _maybe_null_out(result, axis, mask, min_count=1):\n     \"\"\"\n     xarray version of pandas.core.nanops._maybe_null_out\n     \"\"\"\n-    if hasattr(axis, \"__len__\"):  # if tuple or list\n-        raise ValueError(\n-            \"min_count is not available for reduction with more than one dimensions.\"\n-        )\n \n     if axis is not None and getattr(result, \"ndim\", False):\n-        null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0\n+        null_mask = (np.take(mask.shape, axis).prod() - mask.sum(axis) - min_count) < 0\n         if null_mask.any():\n             dtype, fill_value = dtypes.maybe_promote(result.dtype)\n             result = result.astype(dtype)\n",
+  "steps": [
+    {
+      "index": 1,
+      "thought": "applying hunk 1/1 to xarray/core/nanops.py",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "xarray/core/nanops.py",
+        "old_string": "    \"\"\"\n    xarray version of pandas.core.nanops._maybe_null_out\n    \"\"\"\n    if hasattr(axis, \"__len__\"):  # if tuple or list\n        raise ValueError(\n            \"min_count is not available for reduction with more than one dimensions.\"\n        )\n\n    if axis is not None and getattr(result, \"ndim\", False):\n        null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0\n        if null_mask.any():\n            dtype, fill_value = dtypes.maybe_promote(result.dtype)\n            result = result.astype(dtype)",
+        "new_string": "    \"\"\"\n    xarray version of pandas.core.nanops._maybe_null_out\n    \"\"\"\n\n    if axis is not None and getattr(result, \"ndim\", False):\n        null_mask = (np.take(mask.shape, axis).prod() - mask.sum(axis) - min_count) < 0\n        if null_mask.any():\n            dtype, fill_value = dtypes.maybe_promote(result.dtype)\n            result = result.astype(dtype)"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Edited 'xarray/core/nanops.py': replaced 13 line(s) at line 26-38 with 9 line(s)",
+      "duration": 0.11709469899994929,
+      "cost": 0.0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "returned_model": "gold-replay",
+      "cache_hit_tokens": null,
+      "cache_miss_tokens": null,
+      "reasoning_tokens": null,
+      "reasoning_content": null,
+      "api_finish_reason": null,
+      "tools_declared": null
+    }
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing one issue in a Python repository that is already checked out at /testbed.\n\nYou work only through the tools listed below. The container has no network access: nothing can be\ndownloaded, fetched or cloned, so every answer has to come from the code in front of you.\nEvery tool answers with <summary>, sometimes <content>, and <next_actions>. When a tool reports an error,\nread its <next_actions> before trying anything else — they tell you both what to retry and when to stop.\n\nHow to work:\n1. Find the code the issue is about, with search_code and list_files.\n2. read_file the relevant code before editing it. Never edit text you have not read in this session.\n3. Try to reproduce the reported behaviour with run_python before you change anything. Reading code tells\n   you what it should do; running it tells you what it does. Keep that script — you will rerun it to check\n   your fix. If two attempts do not reproduce it, say in one line why, then go to step 4 anyway and fix the\n   cause you read in the code: a fix you could not reproduce first may still be right, no fix scores zero.\n4. Make the smallest change that fixes the reported behaviour, with apply_patch.\n5. If you have a reproduction script, rerun it to confirm the behaviour changed. Then run the tests that\n   cover the code you edited, with run_tests.\n6. Call git_diff to check you changed only what you meant to, then call finish.\n\nRules that matter for how your work is graded:\n- Change repository files with apply_patch, not with run_python. apply_patch checks that the text you are\n  replacing is really there; a script that rewrites a file silently does the wrong thing when it is wrong.\n- Do not modify or add tests. Your change is graded by tests you cannot see.\n- Do not undo your change before finishing; an empty diff scores zero.\n- Fix the cause described in the issue, not just the one example in it.\n- If three edits to the same file fail in a row, stop editing that file and re-read it instead.\n"
+    },
+    {
+      "role": "user",
+      "content": "<issue>\nsum: min_count is not available for reduction with more than one dimensions\n**Is your feature request related to a problem? Please describe.**\r\n\r\n`sum` with `min_count` errors when passing more than one dim:\r\n\r\n```python\r\nimport xarray as xr\r\nda = xr.DataArray([[1., 2, 3], [4, 5, 6]])\r\nda.sum([\"dim_0\", \"dim_1\"], min_count=1)\r\n```\r\n\r\n**Describe the solution you'd like**\r\nThe logic to calculate the number of valid elements is here:\r\nhttps://github.com/pydata/xarray/blob/1be777fe725a85b8cc0f65a2bc41f4bc2ba18043/xarray/core/nanops.py#L35\r\n\r\nI *think* this can be fixed by replacing\r\n\r\n`mask.shape[axis]` with `np.take(a.shape, axis).prod()`\r\n\r\n**Additional context**\r\nPotentially relevant for #4351\r\n\n\n</issue>"
+    },
+    {
+      "role": "assistant",
+      "content": "applying hunk 1/1 to xarray/core/nanops.py",
+      "tool_calls": [
+        {
+          "id": "call-0",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"xarray/core/nanops.py\", \"old_string\": \"    \\\"\\\"\\\"\\n    xarray version of pandas.core.nanops._maybe_null_out\\n    \\\"\\\"\\\"\\n    if hasattr(axis, \\\"__len__\\\"):  # if tuple or list\\n        raise ValueError(\\n            \\\"min_count is not available for reduction with more than one dimensions.\\\"\\n        )\\n\\n    if axis is not None and getattr(result, \\\"ndim\\\", False):\\n        null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0\\n        if null_mask.any():\\n            dtype, fill_value = dtypes.maybe_promote(result.dtype)\\n            result = result.astype(dtype)\", \"new_string\": \"    \\\"\\\"\\\"\\n    xarray version of pandas.core.nanops._maybe_null_out\\n    \\\"\\\"\\\"\\n\\n    if axis is not None and getattr(result, \\\"ndim\\\", False):\\n        null_mask = (np.take(mask.shape, axis).prod() - mask.sum(axis) - min_count) < 0\\n        if null_mask.any():\\n            dtype, fill_value = dtypes.maybe_promote(result.dtype)\\n            result = result.astype(dtype)\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-0",
+      "content": "<summary>\nEdited 'xarray/core/nanops.py': replaced 13 line(s) at line 26-38 with 9 line(s)\n</summary>\n<content>\n    23\t\n    24\t\n    25\tdef _maybe_null_out(result, axis, mask, min_count=1):\n    26\t    \"\"\"\n    27\t    xarray version of pandas.core.nanops._maybe_null_out\n    28\t    \"\"\"\n    29\t\n    30\t    if axis is not None and getattr(result, \"ndim\", False):\n    31\t        null_mask = (np.take(mask.shape, axis).prod() - mask.sum(axis) - min_count) < 0\n    32\t        if null_mask.any():\n    33\t            dtype, fill_value = dtypes.maybe_promote(result.dtype)\n    34\t            result = result.astype(dtype)\n    35\t            result[null_mask] = fill_value\n    36\t\n    37\t    elif getattr(result, \"dtype\", None) not in dtypes.NAT_TYPES:\n</content>\n<next_actions>\n- Call run_tests to check the edit, or git_diff to review everything changed so far.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "replayed every hunk",
+      "tool_calls": [
+        {
+          "id": "call-1",
+          "type": "function",
+          "function": {
+            "name": "finish",
+            "arguments": "{\"reason\": \"gold patch replayed\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-1",
+      "content": "<summary>\nStopping here.\n</summary>"
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "instance_id": "astropy__astropy-14182",
+  "stop_reason": "finished",
+  "finish_reason": "gold patch replayed",
+  "error": "",
+  "total_cost": 0.0,
+  "total_duration": 0.33681973800003107,
+  "api_calls": 4,
+  "model_patch": "diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py\nindex abdeba8ef..d765e369e 100755\n--- a/astropy/io/ascii/rst.py\n+++ b/astropy/io/ascii/rst.py\n@@ -27,7 +27,6 @@ class SimpleRSTHeader(FixedWidthHeader):\n \n \n class SimpleRSTData(FixedWidthData):\n-    start_line = 3\n     end_line = -1\n     splitter_class = FixedWidthTwoLineDataSplitter\n \n@@ -39,12 +38,29 @@ class RST(FixedWidth):\n \n     Example::\n \n-        ==== ===== ======\n-        Col1  Col2  Col3\n-        ==== ===== ======\n-          1    2.3  Hello\n-          2    4.5  Worlds\n-        ==== ===== ======\n+      >>> from astropy.table import QTable\n+      >>> import astropy.units as u\n+      >>> import sys\n+      >>> tbl = QTable({\"wave\": [350, 950] * u.nm, \"response\": [0.7, 1.2] * u.count})\n+      >>> tbl.write(sys.stdout,  format=\"ascii.rst\")\n+      ===== ========\n+       wave response\n+      ===== ========\n+      350.0      0.7\n+      950.0      1.2\n+      ===== ========\n+\n+    Like other fixed-width formats, when writing a table you can provide ``header_rows``\n+    to specify a list of table rows to output as the header.  For example::\n+\n+      >>> tbl.write(sys.stdout,  format=\"ascii.rst\", header_rows=['name', 'unit'])\n+      ===== ========\n+       wave response\n+         nm       ct\n+      ===== ========\n+      350.0      0.7\n+      950.0      1.2\n+      ===== ========\n \n     Currently there is no support for reading tables which utilize continuation lines,\n     or for ones which define column spans through the use of an additional\n@@ -57,10 +73,15 @@ class RST(FixedWidth):\n     data_class = SimpleRSTData\n     header_class = SimpleRSTHeader\n \n-    def __init__(self):\n-        super().__init__(delimiter_pad=None, bookend=False)\n+    def __init__(self, header_rows=None):\n+        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n \n     def write(self, lines):\n         lines = super().write(lines)\n-        lines = [lines[1]] + lines + [lines[1]]\n+        idx = len(self.header.header_rows)\n+        lines = [lines[idx]] + lines + [lines[idx]]\n         return lines\n+\n+    def read(self, table):\n+        self.data.start_line = 2 + len(self.header.header_rows)\n+        return super().read(table)\n",
+  "steps": [
+    {
+      "index": 1,
+      "thought": "applying hunk 1/3 to astropy/io/ascii/rst.py",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "astropy/io/ascii/rst.py",
+        "old_string": "\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n",
+        "new_string": "\n\nclass SimpleRSTData(FixedWidthData):\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Edited 'astropy/io/ascii/rst.py': replaced 6 line(s) at line 27-33 with 5 line(s)",
+      "duration": 0.12682166299998698,
+      "cost": 0.0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "returned_model": "gold-replay",
+      "cache_hit_tokens": null,
+      "cache_miss_tokens": null,
+      "reasoning_tokens": null,
+      "reasoning_content": null,
+      "api_finish_reason": null,
+      "tools_declared": null
+    },
+    {
+      "index": 2,
+      "thought": "applying hunk 2/3 to astropy/io/ascii/rst.py",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "astropy/io/ascii/rst.py",
+        "old_string": "\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional",
+        "new_string": "\n    Example::\n\n      >>> from astropy.table import QTable\n      >>> import astropy.units as u\n      >>> import sys\n      >>> tbl = QTable({\"wave\": [350, 950] * u.nm, \"response\": [0.7, 1.2] * u.count})\n      >>> tbl.write(sys.stdout,  format=\"ascii.rst\")\n      ===== ========\n       wave response\n      ===== ========\n      350.0      0.7\n      950.0      1.2\n      ===== ========\n\n    Like other fixed-width formats, when writing a table you can provide ``header_rows``\n    to specify a list of table rows to output as the header.  For example::\n\n      >>> tbl.write(sys.stdout,  format=\"ascii.rst\", header_rows=['name', 'unit'])\n      ===== ========\n       wave response\n         nm       ct\n      ===== ========\n      350.0      0.7\n      950.0      1.2\n      ===== ========\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Edited 'astropy/io/ascii/rst.py': replaced 12 line(s) at line 38-49 with 29 line(s)",
+      "duration": 0.10172894999999471,
+      "cost": 0.0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "returned_model": "gold-replay",
+      "cache_hit_tokens": null,
+      "cache_miss_tokens": null,
+      "reasoning_tokens": null,
+      "reasoning_content": null,
+      "api_finish_reason": null,
+      "tools_declared": null
+    },
+    {
+      "index": 3,
+      "thought": "applying hunk 3/3 to astropy/io/ascii/rst.py",
+      "tool_name": "apply_patch",
+      "tool_args": {
+        "path": "astropy/io/ascii/rst.py",
+        "old_string": "    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self):\n        super().__init__(delimiter_pad=None, bookend=False)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        lines = [lines[1]] + lines + [lines[1]]\n        return lines",
+        "new_string": "    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        idx = len(self.header.header_rows)\n        lines = [lines[idx]] + lines + [lines[idx]]\n        return lines\n\n    def read(self, table):\n        self.data.start_line = 2 + len(self.header.header_rows)\n        return super().read(table)"
+      },
+      "status": "ok",
+      "failure_category": null,
+      "summary": "Edited 'astropy/io/ascii/rst.py': replaced 10 line(s) at line 73-82 with 15 line(s)",
+      "duration": 0.1082001739999896,
+      "cost": 0.0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "returned_model": "gold-replay",
+      "cache_hit_tokens": null,
+      "cache_miss_tokens": null,
+      "reasoning_tokens": null,
+      "reasoning_content": null,
+      "api_finish_reason": null,
+      "tools_declared": null
+    }
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing one issue in a Python repository that is already checked out at /testbed.\n\nYou work only through the tools listed below. The container has no network access: nothing can be\ndownloaded, fetched or cloned, so every answer has to come from the code in front of you.\nEvery tool answers with <summary>, sometimes <content>, and <next_actions>. When a tool reports an error,\nread its <next_actions> before trying anything else — they tell you both what to retry and when to stop.\n\nHow to work:\n1. Find the code the issue is about, with search_code and list_files.\n2. read_file the relevant code before editing it. Never edit text you have not read in this session.\n3. Try to reproduce the reported behaviour with run_python before you change anything. Reading code tells\n   you what it should do; running it tells you what it does. Keep that script — you will rerun it to check\n   your fix. If two attempts do not reproduce it, say in one line why, then go to step 4 anyway and fix the\n   cause you read in the code: a fix you could not reproduce first may still be right, no fix scores zero.\n4. Make the smallest change that fixes the reported behaviour, with apply_patch.\n5. If you have a reproduction script, rerun it to confirm the behaviour changed. Then run the tests that\n   cover the code you edited, with run_tests.\n6. Call git_diff to check you changed only what you meant to, then call finish.\n\nRules that matter for how your work is graded:\n- Change repository files with apply_patch, not with run_python. apply_patch checks that the text you are\n  replacing is really there; a script that rewrites a file silently does the wrong thing when it is wrong.\n- Do not modify or add tests. Your change is graded by tests you cannot see.\n- Do not undo your change before finishing; an empty diff scores zero.\n- Fix the cause described in the issue, not just the one example in it.\n- If three edits to the same file fail in a row, stop editing that file and re-read it instead.\n"
+    },
+    {
+      "role": "user",
+      "content": "<issue>\nPlease support header rows in RestructuredText output\n### Description\r\n\r\nIt would be great if the following would work:\r\n\r\n```Python\r\n>>> from astropy.table import QTable\r\n>>> import astropy.units as u\r\n>>> import sys\r\n>>> tbl = QTable({'wave': [350,950]*u.nm, 'response': [0.7, 1.2]*u.count})\r\n>>> tbl.write(sys.stdout,  format=\"ascii.rst\")\r\n===== ========\r\n wave response\r\n===== ========\r\n350.0      0.7\r\n950.0      1.2\r\n===== ========\r\n>>> tbl.write(sys.stdout,  format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\r\n|  wave | response |\r\n|    nm |       ct |\r\n| 350.0 |      0.7 |\r\n| 950.0 |      1.2 |\r\n>>> tbl.write(sys.stdout,  format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/usr/lib/python3/dist-packages/astropy/table/connect.py\", line 129, in __call__\r\n    self.registry.write(instance, *args, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/registry/core.py\", line 369, in write\r\n    return writer(data, *args, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/connect.py\", line 26, in io_write\r\n    return write(table, filename, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/ui.py\", line 856, in write\r\n    writer = get_writer(Writer=Writer, fast_writer=fast_writer, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/ui.py\", line 800, in get_writer\r\n    writer = core._get_writer(Writer, fast_writer, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/core.py\", line 1719, in _get_writer\r\n    writer = Writer(**writer_kwargs)\r\nTypeError: RST.__init__() got an unexpected keyword argument 'header_rows'\r\n```\r\n\r\n\r\n### Additional context\r\n\r\nRestructuredText output is a great way to fill autogenerated documentation with content, so having this flexible makes the life easier `:-)`\r\n\r\n\n\n</issue>"
+    },
+    {
+      "role": "assistant",
+      "content": "applying hunk 1/3 to astropy/io/ascii/rst.py",
+      "tool_calls": [
+        {
+          "id": "call-0",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"astropy/io/ascii/rst.py\", \"old_string\": \"\\n\\nclass SimpleRSTData(FixedWidthData):\\n    start_line = 3\\n    end_line = -1\\n    splitter_class = FixedWidthTwoLineDataSplitter\\n\", \"new_string\": \"\\n\\nclass SimpleRSTData(FixedWidthData):\\n    end_line = -1\\n    splitter_class = FixedWidthTwoLineDataSplitter\\n\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-0",
+      "content": "<summary>\nEdited 'astropy/io/ascii/rst.py': replaced 6 line(s) at line 27-33 with 5 line(s)\n</summary>\n<content>\n    24\t        # The right hand column can be unbounded\n    25\t        ends[-1] = None\n    26\t        return vals, starts, ends\n    27\t\n    28\t\n    29\tclass SimpleRSTData(FixedWidthData):\n    30\t    end_line = -1\n    31\t    splitter_class = FixedWidthTwoLineDataSplitter\n    32\t\n    33\t\n    34\tclass RST(FixedWidth):\n</content>\n<next_actions>\n- Call run_tests to check the edit, or git_diff to review everything changed so far.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "applying hunk 2/3 to astropy/io/ascii/rst.py",
+      "tool_calls": [
+        {
+          "id": "call-1",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"astropy/io/ascii/rst.py\", \"old_string\": \"\\n    Example::\\n\\n        ==== ===== ======\\n        Col1  Col2  Col3\\n        ==== ===== ======\\n          1    2.3  Hello\\n          2    4.5  Worlds\\n        ==== ===== ======\\n\\n    Currently there is no support for reading tables which utilize continuation lines,\\n    or for ones which define column spans through the use of an additional\", \"new_string\": \"\\n    Example::\\n\\n      >>> from astropy.table import QTable\\n      >>> import astropy.units as u\\n      >>> import sys\\n      >>> tbl = QTable({\\\"wave\\\": [350, 950] * u.nm, \\\"response\\\": [0.7, 1.2] * u.count})\\n      >>> tbl.write(sys.stdout,  format=\\\"ascii.rst\\\")\\n      ===== ========\\n       wave response\\n      ===== ========\\n      350.0      0.7\\n      950.0      1.2\\n      ===== ========\\n\\n    Like other fixed-width formats, when writing a table you can provide ``header_rows``\\n    to specify a list of table rows to output as the header.  For example::\\n\\n      >>> tbl.write(sys.stdout,  format=\\\"ascii.rst\\\", header_rows=['name', 'unit'])\\n      ===== ========\\n       wave response\\n         nm       ct\\n      ===== ========\\n      350.0      0.7\\n      950.0      1.2\\n      ===== ========\\n\\n    Currently there is no support for reading tables which utilize continuation lines,\\n    or for ones which define column spans through the use of an additional\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-1",
+      "content": "<summary>\nEdited 'astropy/io/ascii/rst.py': replaced 12 line(s) at line 38-49 with 29 line(s)\n</summary>\n<content>\n    35\t    \"\"\"reStructuredText simple format table.\n    36\t\n    37\t    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n    38\t\n    39\t    Example::\n    40\t\n    41\t      >>> from astropy.table import QTable\n    42\t      >>> import astropy.units as u\n    43\t      >>> import sys\n    44\t      >>> tbl = QTable({\"wave\": [350, 950] * u.nm, \"response\": [0.7, 1.2] * u.count})\n    45\t      >>> tbl.write(sys.stdout,  format=\"ascii.rst\")\n    46\t      ===== ========\n    47\t       wave response\n    48\t      ===== ========\n    49\t      350.0      0.7\n    50\t      950.0      1.2\n    51\t      ===== ========\n    52\t\n    53\t    Like other fixed-width formats, when writing a table you can provide ``header_rows``\n    54\t    to specify a list of table rows to output as the header.  For example::\n    55\t\n    56\t      >>> tbl.write(sys.stdout,  format=\"ascii.rst\", header_rows=['name', 'unit'])\n    57\t      ===== ========\n    58\t       wave response\n    59\t         nm       ct\n    60\t      ===== ========\n    61\t      350.0      0.7\n    62\t      950.0      1.2\n    63\t      ===== ========\n    64\t\n    65\t    Currently there is no support for reading tables which utilize continuation lines,\n    66\t    or for ones which define column spans through the use of an additional\n    67\t    line of dashes in the header.\n    68\t\n    69\t    \"\"\"\n</content>\n<next_actions>\n- Call run_tests to check the edit, or git_diff to review everything changed so far.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "applying hunk 3/3 to astropy/io/ascii/rst.py",
+      "tool_calls": [
+        {
+          "id": "call-2",
+          "type": "function",
+          "function": {
+            "name": "apply_patch",
+            "arguments": "{\"path\": \"astropy/io/ascii/rst.py\", \"old_string\": \"    data_class = SimpleRSTData\\n    header_class = SimpleRSTHeader\\n\\n    def __init__(self):\\n        super().__init__(delimiter_pad=None, bookend=False)\\n\\n    def write(self, lines):\\n        lines = super().write(lines)\\n        lines = [lines[1]] + lines + [lines[1]]\\n        return lines\", \"new_string\": \"    data_class = SimpleRSTData\\n    header_class = SimpleRSTHeader\\n\\n    def __init__(self, header_rows=None):\\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\\n\\n    def write(self, lines):\\n        lines = super().write(lines)\\n        idx = len(self.header.header_rows)\\n        lines = [lines[idx]] + lines + [lines[idx]]\\n        return lines\\n\\n    def read(self, table):\\n        self.data.start_line = 2 + len(self.header.header_rows)\\n        return super().read(table)\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-2",
+      "content": "<summary>\nEdited 'astropy/io/ascii/rst.py': replaced 10 line(s) at line 73-82 with 15 line(s)\n</summary>\n<content>\n    70\t\n    71\t    _format_name = \"rst\"\n    72\t    _description = \"reStructuredText simple table\"\n    73\t    data_class = SimpleRSTData\n    74\t    header_class = SimpleRSTHeader\n    75\t\n    76\t    def __init__(self, header_rows=None):\n    77\t        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n    78\t\n    79\t    def write(self, lines):\n    80\t        lines = super().write(lines)\n    81\t        idx = len(self.header.header_rows)\n    82\t        lines = [lines[idx]] + lines + [lines[idx]]\n    83\t        return lines\n    84\t\n    85\t    def read(self, table):\n    86\t        self.data.start_line = 2 + len(self.header.header_rows)\n    87\t        return super().read(table)\n</content>\n<next_actions>\n- Call run_tests to check the edit, or git_diff to review everything changed so far.\n</next_actions>"
+    },
+    {
+      "role": "assistant",
+      "content": "replayed every hunk",
+      "tool_calls": [
+        {
+          "id": "call-3",
+          "type": "function",
+          "function": {
+            "name": "finish",
+            "arguments": "{\"reason\": \"gold patch replayed\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-3",
+      "content": "<summary>\nStopping here.\n</summary>"
+    }
+  ]
+}

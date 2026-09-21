@@ -38,9 +38,11 @@ class ScriptedClient:
         self.raises = raises
         self.calls = 0
         self.seen: list[list[dict]] = []
+        self.seen_tools: list[list[str]] = []
 
     def complete(self, messages, tools):
         self.seen.append(list(messages))
+        self.seen_tools.append([schema["function"]["name"] for schema in tools])
         self.calls += 1
         if self.raises is not None:
             raise self.raises
@@ -58,10 +60,11 @@ def failing_tool(**_):
     )
 
 
-def episode(client, tools, **config_kwargs):
+def episode(client, tools, *, tool_policy=None, **config_kwargs):
     return run_episode(
         instance_id="x__x-1", problem_statement="an issue", tools=tools, client=client,
         tool_schemas=build_tool_schemas(), config=LoopConfig(**config_kwargs),
+        tool_policy=tool_policy,
     )
 
 
@@ -343,3 +346,258 @@ def test_api_finish_reason_does_not_collide_with_the_finish_tool_reason():
     assert result.stop_reason == StopReason.FINISHED
     assert result.finish_reason == "patch applied"
     assert result.steps[0].api_finish_reason == "length"
+
+
+# ------------------------------------------------------- 工具集每步可变（决定 C23）
+
+ALL_TOOLS = {"read_file": ok_tool, "run_tests": ok_tool}
+
+
+def drop_run_tests_from(step: int):
+    """一个最小的策略：到第 `step` 步就把 run_tests 摘掉。真策略长什么样是另一回事，这里只测机制。"""
+    def policy(index, _result):
+        names = ["read_file", "run_tests", "finish"]
+        return [name for name in names if not (index >= step and name == "run_tests")]
+    return policy
+
+
+def test_without_a_policy_the_tool_table_never_changes():
+    """不传 tool_policy 时必须一字不差走老路：工具表每步相同、transcript 里不多一条消息、那一列记 None。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    result, messages = episode(client, ALL_TOOLS, max_steps=3)
+
+    assert client.seen_tools[0] == client.seen_tools[-1]
+    assert "run_tests" in client.seen_tools[-1]
+    assert not [m for m in messages if "<tools_changed>" in str(m.get("content", ""))]
+    assert all(step.tools_declared is None for step in result.steps)
+
+
+def test_a_policy_narrows_the_tool_table_from_the_step_it_fires():
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    _, messages = episode(client, ALL_TOOLS, max_steps=3, tool_policy=drop_run_tests_from(2))
+
+    assert "run_tests" in client.seen_tools[0]          # 第 1 步还在
+    assert "run_tests" not in client.seen_tools[1]      # 第 2 步起没了
+    assert "read_file" in client.seen_tools[1] and "finish" in client.seen_tools[1]
+    # 摘掉这件事必须落进 transcript，否则重放时看不出模型当时能调什么
+    changed = [m for m in messages if "<tools_changed>" in str(m.get("content", ""))]
+    assert len(changed) == 1
+    assert changed[0]["role"] == "system"
+    assert "no longer available: run_tests" in changed[0]["content"]
+
+
+def test_the_tool_table_keeps_its_original_order_when_narrowed():
+    """顺序变一遍等于请求前缀变一遍，白丢缓存（决定 C23）。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    episode(client, ALL_TOOLS, max_steps=2, tool_policy=drop_run_tests_from(2))
+
+    full_order = [name for name in client.seen_tools[0] if name != "run_tests"]
+    assert client.seen_tools[1] == full_order
+
+
+def test_a_retired_tool_can_no_longer_be_executed():
+    """声明集和执行集必须同时收窄 —— 只改工具表、还照跑，等于没摘。"""
+    ran = []
+
+    def counting_tool(**_):
+        ran.append("run_tests")
+        return Observation.ok(summary="ran", content="")
+
+    client = ScriptedClient([reply(call("run_tests", target="t.py"))])
+    result, _ = episode(client, {"read_file": ok_tool, "run_tests": counting_tool},
+                        max_steps=2, tool_policy=drop_run_tests_from(2))
+
+    assert ran == ["run_tests"]  # 第 1 步真跑了，第 2 步被拦下
+    retired_step = result.steps[1]
+    assert retired_step.status == "error"
+    assert "no longer available" in retired_step.summary
+    assert retired_step.failure_category == str(FailureCategory.INVALID_ARGUMENT)
+
+
+def test_each_step_records_what_it_declared():
+    """重放要能精确重建当时模型看见的工具（决定 C23）。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    result, _ = episode(client, ALL_TOOLS, max_steps=3, tool_policy=drop_run_tests_from(3))
+
+    assert result.steps[0].tools_declared == ["read_file", "run_tests", "finish"]
+    assert result.steps[2].tools_declared == ["read_file", "finish"]
+    assert json.loads(json.dumps(asdict(result.steps[2])))["tools_declared"] == ["read_file", "finish"]
+
+
+def test_putting_a_tool_back_is_announced_too():
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+
+    def policy(index, _result):
+        if index == 2:
+            return ["read_file", "finish"]
+        return ["read_file", "run_tests", "finish"]
+
+    _, messages = episode(client, ALL_TOOLS, max_steps=3, tool_policy=policy)
+
+    changed = [m["content"] for m in messages if "<tools_changed>" in str(m.get("content", ""))]
+    assert len(changed) == 2
+    assert "no longer available: run_tests" in changed[0]
+    assert "now available: run_tests" in changed[1]
+
+
+def test_a_policy_that_drops_finish_is_a_configuration_error():
+    """摘掉 finish 就只剩 max_steps 能停 —— 当场炸掉，别跑完一整批才发现。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    with pytest.raises(ValueError, match="finish"):
+        episode(client, ALL_TOOLS, max_steps=2, tool_policy=lambda *_: ["read_file"])
+
+
+def test_a_policy_cannot_declare_a_tool_that_is_not_wired_up():
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    with pytest.raises(ValueError, match="not wired up"):
+        episode(client, ALL_TOOLS, max_steps=2, tool_policy=lambda *_: ["read_file", "teleport", "finish"])
+
+
+# --------------------------------------------------- 批量折叠：缓存友好的裁剪（决定 C24）
+
+def observation_message(index):
+    return {"role": "tool", "tool_call_id": f"c{index}",
+            "content": f"<summary>\nread file {index}\n</summary>\n<content>\nbody {index}\n</content>"}
+
+
+def views_after_each_turn(fold_batch, turns=20, keep_full=5):
+    """把「每轮发出去的那份视图」逐轮攒起来 —— 和 loop.py 的调用点同构。"""
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "issue"}]
+    views = []
+    for index in range(turns):
+        messages.append({"role": "assistant", "content": f"turn {index}"})
+        messages.append(observation_message(index))
+        views.append(trim_messages(messages, keep_full, fold_batch))
+    return views
+
+
+def is_prefix(shorter, longer):
+    return len(shorter) <= len(longer) and all(a == b for a, b in zip(shorter, longer))
+
+
+def test_fold_batch_one_is_exactly_the_old_behaviour():
+    """默认值是 1，而 1 必须逐字节等于 09-21 之前那版 —— 否则所有历史读数的口径就断了。"""
+    messages = [{"role": "system", "content": "sys"}] + [observation_message(i) for i in range(9)]
+
+    trimmed = trim_messages(messages, keep_full=5)  # 不传 fold_batch
+    kept = [m["content"] for m in trimmed
+            if m.get("role") == "tool" and not m["content"].startswith("[observation elided")]
+
+    assert kept == [observation_message(i)["content"] for i in range(4, 9)]
+
+
+def test_the_fold_boundary_only_moves_every_fold_batch_observations():
+    """9 条观察时还没跨过第一个批次边界，10 条时才折叠 —— 折叠一次就折 5 条。"""
+    nine = [{"role": "system", "content": "sys"}] + [observation_message(i) for i in range(9)]
+    ten = nine + [observation_message(9)]
+
+    elided_at_nine = [m for m in trim_messages(nine, 5, 5) if m["content"].startswith("[observation elided")]
+    elided_at_ten = [m for m in trim_messages(ten, 5, 5) if m["content"].startswith("[observation elided")]
+
+    assert elided_at_nine == []   # 保护窗口浮到了 9 条，模型看到的只多不少
+    assert len(elided_at_ten) == 5
+
+
+def test_batched_folding_breaks_the_prefix_far_less_often():
+    """缓存友好的形式判据：折叠边界不动的那几轮，上一轮的视图必须是下一轮视图的**前缀**。
+
+    这正是 EVAL-P2-rerun.md §4.2 实测到的那件事 —— 前缀一断，其后全部未命中，而未命中贵 50 倍。
+    ⚠️ 这三个数字是 20 轮 / keep_full=5 下的快照，机制本身由下一条不变量测试钉死。
+    """
+    def breaks(fold_batch):
+        views = views_after_each_turn(fold_batch)
+        return sum(1 for a, b in zip(views, views[1:]) if not is_prefix(a, b))
+
+    assert breaks(1) == 15   # 现状：过了保护窗口之后每轮都断
+    assert breaks(5) == 3    # 攒 5 条：20 轮只断 3 次
+    assert breaks(10) == 1
+
+
+@pytest.mark.parametrize("keep_full", [1, 3, 5])
+@pytest.mark.parametrize("fold_batch", [1, 2, 5, 7])
+def test_the_prefix_breaks_exactly_when_the_fold_boundary_moves(keep_full, fold_batch):
+    """真正要钉的不变量：**前缀断裂 ⟺ 折叠边界移动**，对任意 (keep_full, fold_batch) 都成立。
+
+    上一条只记录了三个计数，改坏公式而恰好保住那三个数字仍能混过去；这一条把两件独立可观察的事
+    绑在一起，公式错了就对不上（Codex 09-21 审稿 MINOR）。
+    """
+    views = views_after_each_turn(fold_batch, turns=16, keep_full=keep_full)
+    folded = [sum(1 for m in view if m["content"].startswith("[observation elided")) for view in views]
+
+    broke = [not is_prefix(a, b) for a, b in zip(views, views[1:])]
+    moved = [before != after for before, after in zip(folded, folded[1:])]
+    assert broke == moved
+
+
+@pytest.mark.parametrize("keep_full", [1, 3, 5])
+@pytest.mark.parametrize("fold_batch", [1, 2, 5, 7])
+def test_the_protected_window_stays_between_keep_full_and_keep_full_plus_batch(keep_full, fold_batch):
+    """浮动窗口的两头都要有闸：下界是「模型看到的只多不少」，上界是「不会攒到装不下」。"""
+    for turns in range(1, 17):
+        view = views_after_each_turn(fold_batch, turns=turns, keep_full=keep_full)[-1]
+        full = sum(1 for m in view
+                   if m.get("role") == "tool" and not m["content"].startswith("[observation elided"))
+        assert min(turns, keep_full) <= full <= keep_full + fold_batch - 1 or full == turns
+
+
+def test_batching_never_shows_the_model_less_than_keep_full():
+    """浮动窗口只会更宽不会更窄 —— 这条保证「省钱的改动不会顺手削弱模型」。"""
+    for turns in range(1, 21):
+        views = views_after_each_turn(5, turns=turns)
+        full = [m for m in views[-1]
+                if m.get("role") == "tool" and not m["content"].startswith("[observation elided")]
+        assert len(full) >= min(turns, 5)
+
+
+def test_a_fold_batch_below_one_is_rejected():
+    with pytest.raises(ValueError, match="fold_batch"):
+        trim_messages([], keep_full=5, fold_batch=0)
+
+
+def test_context_overflow_also_turns_batching_off():
+    """装不下的时候缓存不重要了：keep_full 和 fold_batch 一起降到最狠的一档（决定 C11 + C24）。"""
+    class OverflowOnce:
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        def complete(self, messages, tools):
+            self.calls += 1
+            if self.calls == 1:
+                raise ContextOverflow("too long")
+            self.seen.append(list(messages))
+            return reply(call("finish", reason="done"))
+
+    client = OverflowOnce()
+    result, _ = episode(client, ALL_TOOLS, max_steps=4)
+
+    assert result.stop_reason == StopReason.FINISHED
+    assert client.calls == 2
+
+
+def test_overflow_never_widens_a_zero_keep_full_window():
+    """`keep_full=0` 比 1 更狠，降档**不许把它放宽**（Codex 09-21 审稿 MAJOR-2）。
+
+    原来的降档直接赋 `keep_full = 1`：配成 0 的跑一旦 overflow，重试发出去的历史反而更长。
+    """
+    class OverflowAtThirdCall:
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        def complete(self, messages, tools):
+            self.calls += 1
+            if self.calls == 3:
+                raise ContextOverflow("too long")
+            self.seen.append(list(messages))
+            if self.calls > 3:
+                return reply(call("finish", reason="done"))
+            return reply(call("read_file", path=f"a{self.calls}.py"))
+
+    client = OverflowAtThirdCall()
+    result, _ = episode(client, ALL_TOOLS, max_steps=6, keep_full_observations=0, fold_batch=5)
+
+    assert result.stop_reason == StopReason.FINISHED
+    full_after_overflow = [m for m in client.seen[-1] if m.get("role") == "tool"
+                           and not m["content"].startswith("[observation elided")]
+    assert full_after_overflow == []

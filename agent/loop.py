@@ -6,7 +6,7 @@
 """
 import json
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum, auto, unique
 from typing import Any, Final, Protocol
@@ -17,6 +17,7 @@ MAX_STEPS: Final[int] = 40
 COST_LIMIT: Final[float] = 0.50
 WALL_CLOCK_LIMIT: Final[float] = 1800.0
 KEEP_FULL_OBSERVATIONS: Final[int] = 5
+FOLD_BATCH: Final[int] = 5
 MAX_CONSECUTIVE_TOOL_ERRORS: Final[int] = 5
 MAX_FILE_EDIT_FAILURES: Final[int] = 3
 MAX_EMPTY_REPLIES: Final[int] = 2
@@ -120,6 +121,9 @@ class StepRecord:
     # 供应商说这一轮为什么停。"length" = 输出被 token 上限砍了，这一轮的 tool_args 可能只有半截。
     # ⚠️ 与 trajectory 顶层的 finish_reason 同名不同义，见 ModelReply 的说明（决定 C22）
     api_finish_reason: str | None = None
+    # 这一步声明给模型的工具名。口径同 C20：None = 没启用 tool_policy（声明的就是全集），
+    # 给了列表 = 启用了，列表就是当时模型能看见的那几个（决定 C23）
+    tools_declared: list[str] | None = None
 
 
 @dataclass
@@ -136,6 +140,13 @@ class EpisodeResult:
     error: str = ""
 
 
+ToolPolicy = Callable[[int, EpisodeResult], Sequence[str]]
+"""每步重算「这一步声明给模型的工具名」。收 (本步序号, 到此为止的结果)，返回工具名（决定 C23）。
+
+不传 = 整条 episode 都是全集，也就是 09-21 之前的唯一行为。
+"""
+
+
 @dataclass(frozen=True)
 class LoopConfig:
     """三个终止条件 + 三条异常路径的阈值。全部有默认值，跑之前只改要改的那个。"""
@@ -144,6 +155,7 @@ class LoopConfig:
     cost_limit: float = COST_LIMIT
     wall_clock_limit: float = WALL_CLOCK_LIMIT
     keep_full_observations: int = KEEP_FULL_OBSERVATIONS
+    fold_batch: int = FOLD_BATCH
     max_consecutive_tool_errors: int = MAX_CONSECUTIVE_TOOL_ERRORS
     max_file_edit_failures: int = MAX_FILE_EDIT_FAILURES
     max_empty_replies: int = MAX_EMPTY_REPLIES
@@ -324,16 +336,50 @@ def build_tool_schemas(target_hint: str = "") -> list[dict]:
     ]
 
 
-def trim_messages(messages: Sequence[dict], keep_full: int) -> list[dict]:
+def select_tool_schemas(tool_schemas: Sequence[dict], declared: Collection[str]) -> list[dict]:
+    """按声明集过滤工具表。**顺序保持原样** —— 重排会让请求前缀变一遍，白白丢缓存（决定 C23）。"""
+    return [schema for schema in tool_schemas if schema["function"]["name"] in declared]
+
+
+def tools_changed_message(added: Sequence[str], removed: Sequence[str]) -> dict:
+    """把工具集的变更写进 transcript：摘掉一个工具，模型得从消息里知道，不能只靠工具表悄悄少一项。
+
+    照 pi 的做法（`agent-loop.ts:291` declareToolChanges）：差分挂在一条 system 消息上，
+    于是「当时模型看见的是哪几个工具」能从历史本身重建，不必另存一份（决定 C23）。
+    """
+    lines = []
+    if added:
+        lines.append(f"now available: {', '.join(added)}")
+    if removed:
+        lines.append(f"no longer available: {', '.join(removed)}")
+    body = "\n".join(lines)
+    return {
+        "role": "system",
+        "content": f"<tools_changed>\n{body}\n</tools_changed>\n"
+                   "The tool list sent with this request is the authoritative one.",
+    }
+
+
+def trim_messages(messages: Sequence[dict], keep_full: int, fold_batch: int = 1) -> list[dict]:
     """保留最近 keep_full 条观察的全文，更早的只留「调了什么工具、结果如何」一行（决定 C8）。
 
     改的是 tool 消息的 content，不删消息 —— 每个 tool_call 都必须有对应的 tool 回复，删了请求就非法了。
+
+    `fold_batch` 是折叠边界**多久移动一次**（决定 C24）。1 = 每多一条观察就往后挪一条，也就是
+    09-21 之前的行为：每轮都在历史中间改一次，前缀缓存每轮断一次。N > 1 时边界只在累计观察数
+    跨过 N 的倍数时移动，保护窗口因此在 [keep_full, keep_full + N) 之间浮动 —— 模型看到的只多不少。
     """
     if keep_full < 0:
         raise ValueError("keep_full must be non-negative")
+    if fold_batch < 1:
+        raise ValueError("fold_batch must be at least 1")
 
     tool_indices = [index for index, message in enumerate(messages) if message.get("role") == "tool"]
-    protected = set(tool_indices[-keep_full:]) if keep_full else set()
+    if keep_full:
+        folded = max(0, ((len(tool_indices) - keep_full) // fold_batch) * fold_batch)
+        protected = set(tool_indices[folded:])
+    else:
+        protected = set()  # keep_full=0 就是「一条都不留全文」，批量与否都不改变这件事
 
     trimmed: list[dict] = []
     for index, message in enumerate(messages):
@@ -365,6 +411,20 @@ def parse_tool_calls(raw_calls: Sequence[Any]) -> list[ToolCall]:
     return calls
 
 
+def _validated_declaration(declared: Sequence[str], tools: Mapping[str, Any]) -> list[str]:
+    """tool_policy 的返回值只在这里检查一次：去重、必须留 finish、不许凭空造一个不存在的工具。
+
+    摘掉 finish 就等于「只能跑到 max_steps 为止」，那是配置错误不是策略，当场炸掉比跑完一整批再发现便宜（决定 C23）。
+    """
+    names = list(dict.fromkeys(declared))
+    if FINISH_TOOL not in names:
+        raise ValueError(f"tool_policy must keep {FINISH_TOOL!r} declared, otherwise the model cannot stop")
+    unknown = [name for name in names if name != FINISH_TOOL and name not in tools]
+    if unknown:
+        raise ValueError(f"tool_policy declared tools that are not wired up: {unknown}")
+    return names
+
+
 def _bad_call(message: str, next_actions: list[str]) -> Observation:
     """模型自己把调用写坏了时的统一回答。归 INVALID_ARGUMENT，和工具内部的参数校验同一类。"""
     return Observation.error(
@@ -380,12 +440,23 @@ def _dispatch(
     tools: Mapping[str, Callable[..., Observation]],
     edit_failures: dict[str, int],
     config: LoopConfig,
+    retired: Collection[str] = (),
 ) -> Observation:
-    """执行一个工具调用，把「模型写坏了」和「工具自己炸了」都变成 Observation（决定 C9、C10）。"""
+    """执行一个工具调用，把「模型写坏了」和「工具自己炸了」都变成 Observation（决定 C9、C10）。
+
+    `retired` 是「这一步被摘掉的工具」：它存在、但这一步不许调。和「压根没这个工具」分开回答，
+    否则模型会以为自己名字写错了，反复重试同一个（决定 C23）。
+    """
     if call.error is not None:
         return _bad_call(
             f"Could not read the arguments of {call.name}: {call.error}",
             ["Call the tool again with a well-formed JSON object of arguments."],
+        )
+
+    if call.name in retired:
+        return _bad_call(
+            f"{call.name} is no longer available in this session",
+            [f"Use one of the tools sent with this request: {', '.join(sorted(tools))}."],
         )
 
     if call.name not in tools:
@@ -441,6 +512,7 @@ def run_episode(
     tool_schemas: Sequence[dict],
     config: LoopConfig = LoopConfig(),
     system_prompt: str = SYSTEM_PROMPT,
+    tool_policy: ToolPolicy | None = None,
 ) -> tuple[EpisodeResult, list[dict]]:
     """跑一条实例的 ReAct 循环，返回 (结果, 完整消息历史)。tools 必须是已经绑好 env 的可调用对象。
 
@@ -456,6 +528,8 @@ def run_episode(
     error_streak = 0
     empty_streak = 0
     keep_full = config.keep_full_observations
+    fold_batch = config.fold_batch
+    declared_before: list[str] | None = None
     started = time.monotonic()
 
     for index in range(1, config.max_steps + 1):
@@ -467,16 +541,38 @@ def run_episode(
             result.stop_reason = StopReason.WALL_CLOCK
             break
 
+        # 1.5 这一步声明哪几个工具。不传 tool_policy 就是全集，请求形状与 09-21 之前逐字节相同（决定 C23）
+        declared: list[str] | None = None
+        step_schemas: Sequence[dict] = tool_schemas
+        step_tools: Mapping[str, Callable[..., Observation]] = tools
+        retired: Collection[str] = ()
+        if tool_policy is not None:
+            declared = _validated_declaration(tool_policy(index, result), tools)
+            if declared != declared_before:
+                if declared_before is not None:  # 第一步没有「上一步」可比，工具表本身就是声明
+                    messages.append(tools_changed_message(
+                        added=[name for name in declared if name not in declared_before],
+                        removed=[name for name in declared_before if name not in declared],
+                    ))
+                declared_before = declared
+            step_schemas = select_tool_schemas(tool_schemas, declared)
+            step_tools = {name: tool for name, tool in tools.items() if name in declared}
+            retired = frozenset(tools) - frozenset(declared)
+
         # 2. think：裁过的历史送进模型；撞上下文上限就裁到只剩最近一条再试，而不是直接放弃（决定 C11）
         call_started = time.monotonic()
         try:
-            reply = client.complete(trim_messages(messages, keep_full), tool_schemas)
+            reply = client.complete(trim_messages(messages, keep_full, fold_batch), step_schemas)
         except ContextOverflow:
-            if keep_full <= 1:
+            if keep_full <= 1 and fold_batch == 1:
                 result.stop_reason = StopReason.CONTEXT_OVERFLOW
-                result.error = "context window exceeded even with only the last observation kept"
+                result.error = (f"context window exceeded even at the harshest trim "
+                                f"(keep_full={keep_full}, fold_batch=1)")
                 break
-            keep_full = 1
+            # 装不下的时候缓存已经不重要了：批量折叠一并关掉，裁到最狠的那一档（决定 C11 + C24）。
+            # ⚠️ 用 min 而不是直接赋 1：keep_full=0 是「一条全文都不留」，比 1 更狠，降档不能把它**放宽**
+            keep_full = min(keep_full, 1)
+            fold_batch = 1
             continue
         except ModelUnavailable as exc:
             result.stop_reason = StopReason.API_ERROR
@@ -523,7 +619,7 @@ def run_episode(
                 continue
 
             act_started = time.monotonic()
-            observation = _dispatch(call, tools, edit_failures, config)
+            observation = _dispatch(call, step_tools, edit_failures, config, retired)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": observation.render()})
 
             result.steps.append(StepRecord(
@@ -544,6 +640,7 @@ def run_episode(
                 reasoning_tokens=reply.reasoning_tokens,
                 reasoning_content=reply.reasoning_content,
                 api_finish_reason=reply.api_finish_reason,
+                tools_declared=list(declared) if declared is not None else None,
             ))
 
             # 5. 异常路径：连着错到阈值就停，而不是重试到死（决定 C10）
