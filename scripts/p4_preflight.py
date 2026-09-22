@@ -84,8 +84,10 @@ def main() -> int:
         ("除了开头那条，其余 system 消息只有工具变更通知",
          others[0] == staged.SKELETON_SYSTEM_PROMPT
          and all(text.startswith("<tools_changed>") for text in others[1:])),
-        ("每一步声明的工具集 = 该步所属段的工具集",
-         all(set(names) == set(staged.STAGE_TOOLS[staged.stage_of(step)])
+        # 比**列表**不比集合：真正发出去的工具表按 schema 原顺序，而 StepRecord.tools_declared 落的是
+        # STAGE_TOOLS 的顺序，两边不一致就等于落盘记录与事实对不上
+        ("每一步发出去的工具表 = 该步所属段的工具表（含顺序）",
+         all(list(names) == list(staged.STAGE_TOOLS[staged.stage_of(step)])
              for step, names in enumerate(recorder.tools, start=1))),
         ("Collect 段确实拿不到 apply_patch",
          all("apply_patch" not in recorder.tools[step - 1]

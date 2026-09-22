@@ -95,9 +95,14 @@ Whatever is in the diff at the end is what gets graded, so never undo your chang
 
 # 段→声明给模型的工具集。`finish` 必须全段保留，否则 `_validated_declaration` 当场抛 ValueError。
 # read_file 三段都留：摘掉读会打爆 apply_patch 的锚点匹配（gold 回放 66/66 那条性质靠它）。
+#
+# ⚠️ **顺序必须与 `build_tool_schemas()` 的原顺序一致**，由 `test_staged.py` 钉死。
+# `select_tool_schemas` 保持原 schema 顺序（C23：重排会让请求前缀变一遍），而 `StepRecord.tools_declared`
+# 落的是这里的顺序 —— 两边不一致，落盘记录就与真正发出去的工具表对不上，后面按 `tools_declared`
+# 重建每轮工具表的分析（C24 的 `scripts/cache_sim.py` 就是这么做的）会拿到一个从未发生过的顺序。
 STAGE_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "COLLECT": ("list_files", "search_code", "read_file", "run_python", "finish"),
-    "IMPLEMENT": ("read_file", "run_python", "apply_patch", "run_tests", "git_diff", "finish"),
+    "IMPLEMENT": ("read_file", "apply_patch", "run_tests", "run_python", "git_diff", "finish"),
     "VERIFY": ("read_file", "apply_patch", "run_tests", "git_diff", "finish"),
 }
 

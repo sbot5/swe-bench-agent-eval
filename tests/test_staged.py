@@ -4,7 +4,19 @@
 这里钉死的是三件跑前必须成立的事：段边界与指令表对得上、每段工具集合法、指纹随内容变。
 """
 from agent import staged
-from agent.loop import FINISH_TOOL, _validated_declaration
+from agent.loop import FINISH_TOOL, _validated_declaration, build_tool_schemas
+
+
+def test_every_stage_lists_its_tools_in_the_canonical_schema_order():
+    """落盘的 `tools_declared` 用的是这里的顺序，真正发出去的工具表用的是 schema 原顺序。
+
+    两边不一致，记录就与事实对不上 —— 后面按 `tools_declared` 重建每轮工具表的分析
+    （C24 的 `scripts/cache_sim.py`）会拿到一个从未发生过的顺序。
+    """
+    canonical = [schema["function"]["name"] for schema in build_tool_schemas()]
+    for stage, names in staged.STAGE_TOOLS.items():
+        expected = [name for name in canonical if name in names]
+        assert list(names) == expected, f"{stage} 段的工具顺序与 build_tool_schemas 不一致"
 
 
 def test_every_step_in_the_budget_belongs_to_exactly_one_stage():

@@ -67,7 +67,15 @@
 | ⒜ 指令怎么换 | **骨架 `system_prompt` + 段指令在消息尾部追加**，`messages[0]` 全程不变 | 文档原给的二选一**都不自洽**：原 `SYSTEM_PROMPT` 的「How to work」六步【原文 `agent/loop.py:172-182`，09-22 直读】**本身就是段指令要替换的东西**，只在尾部追加会让两套流程并存（P3 ⒜「只改第 3 条会让 prompt 自相矛盾」的同型）；中途改写 `messages[0]` 则每个段边界让整棵前缀树作废，而未命中单价是命中的 50 倍【原文 `EVAL-P2-rerun.md:125-143`】。骨架版**删掉六步、保留 grading rules 五条**，段指令追加在尾部 → 两个毛病都没有。另**已核**：`trim_messages` 只折叠 `role=="tool"` 的消息【原文 `agent/loop.py:386`，09-22 直读】，所以段指令不会被 C24 的折叠吃掉 |
 | ⒝ 段边界怎么定 | **固定轮数** | 照本节原倾向。**补一条更硬的**：触发器 T 不只是在摆（跑间极差中位 13 轮），`django-11138` **四跑全部 T=None**【原文 `EVAL-repair-gate-N.md`】→ 用信号当边界，那条实例**永远进不了 Implement 段** |
 | ⒞ 三段各几轮 | **Collect 1–12 · Implement 13–32 · Verify 33–40** | 原标【未知】。本次用已落盘轨迹 $0 算出数据底（`scripts/stage_budget.py`，p2-mine + p2-rerun 各 25 条）：**B 组（动过手的）首刀轮号两跑中位 9 / 11**，12 轮覆盖 **62% / 53%** —— 即「正常实例到这儿都已经动手了」；**首刀之后还要用的轮数中位 14.5 / 9**，所以 Implement 20 + Verify 8 = 28 有余量。⚠️ 这**不是最优解，是有据可查的一个点**：同 16 条配对的首刀轮号跑间差中位 4.5、**max 28**（㊾，量具自己也在摆） |
-| 段→工具表 | **Collect** `list_files search_code read_file run_python finish` · **Implement** `read_file run_python apply_patch run_tests git_diff finish` · **Verify** `read_file apply_patch run_tests git_diff finish` | **Collect 段摘掉 `apply_patch`** 是成分③ 的强制力所在 —— 不是靠指令劝住的（㊳：prompt 里加一条规则 ≠ 系统里多一条规则）；**Implement 起摘掉 `search_code`/`list_files`** 堵 H2 的考古向量；**`read_file` 三段都留**，摘掉读会打爆 `apply_patch` 的锚点匹配（gold 回放 66/66 那条性质靠它）；`finish` 必须全段留，否则 `_validated_declaration` 当场抛 `ValueError` |
+| 段→工具表 | **Collect** `list_files search_code read_file run_python finish` · **Implement** `read_file apply_patch run_tests run_python git_diff finish` · **Verify** `read_file apply_patch run_tests git_diff finish` | **Collect 段摘掉 `apply_patch`** 是成分③ 的强制力所在 —— 不是靠指令劝住的（㊳：prompt 里加一条规则 ≠ 系统里多一条规则）；**Implement 起摘掉 `search_code`/`list_files`** 堵 H2 的考古向量；**`read_file` 三段都留**，摘掉读会打爆 `apply_patch` 的锚点匹配（gold 回放 66/66 那条性质靠它）；`finish` 必须全段留，否则 `_validated_declaration` 当场抛 `ValueError`。⚠️ **三段的工具顺序必须与 `build_tool_schemas()` 的原顺序一致**（由 `test_staged.py` 钉死）——见下方「已纠正的错误」 |
+
+⚠️ **已纠正的错误（不静默改）**：`STAGE_TOOLS["IMPLEMENT"]` 头一版写成 `read_file run_python apply_patch
+run_tests git_diff finish`，**集合对、顺序错**。`select_tool_schemas` 保持 schema 原顺序（C23：重排会让请求
+前缀变一遍），而 `StepRecord.tools_declared` 落的是 `STAGE_TOOLS` 的顺序 —— 两边不一致，**落盘记录就与真正
+发出去的工具表对不上**，后面按 `tools_declared` 重建每轮工具表的分析（C24 的 `scripts/cache_sim.py` 正是这么做的）
+会拿到一个从未发生过的顺序。是 `scripts/p4_preflight.py` 打印的逐步工具集与 `STAGE_TOOLS` 一眼对不上才发现的；
+**当时 197 条测试全绿** —— 因为原来的断言比的是集合。现已改成比列表，并新增
+`test_every_stage_lists_its_tools_in_the_canonical_schema_order` 钉死。又一次「测试绿不等于口径对」。
 
 **指纹**（`PYTHONPATH=. .venv/bin/python -m agent.staged` 打印；改任何一段指令或切法它都会变）：
 
@@ -103,7 +111,7 @@
    ⚠️ 照 §四 原话，这条**证不了本次改动** —— 假模型不看工具表【原文 `tests/gold_replay.py:72-75`】，
    它只保证「不传 `stage_notes`/`tool_policy` 时老路径没变」
 3. ✅ 冒烟**改成 $0 版**：`scripts/p4_preflight.py` 用假模型跑满 40 步，打印指纹、逐步声明的工具集、三段指令原文，
-   并自检 **6 条全过**（`messages[0]` 全程没被改写 · 三条段指令按序到位、一条不多一条不少 ·
+   并自检 **6 条全过**（工具表那条比的是列表不是集合）（`messages[0]` 全程没被改写 · 三条段指令按序到位、一条不多一条不少 ·
    其余 system 消息只有工具变更通知 · 每步工具集 = 该步所属段 · Collect 拿不到 `apply_patch` ·
    Implement/Verify 拿不到 `search_code`）。⚠️ 它**证不了模型会不会照做** —— 那是真跑才能答的，判据在 §三
 4. ⬜ 10 条 `NetworkMode=none` 全覆盖 —— **跑时执行**，逐容器 `docker inspect`
