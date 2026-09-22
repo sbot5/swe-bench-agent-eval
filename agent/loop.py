@@ -513,6 +513,7 @@ def run_episode(
     config: LoopConfig = LoopConfig(),
     system_prompt: str = SYSTEM_PROMPT,
     tool_policy: ToolPolicy | None = None,
+    stage_notes: Mapping[int, str] | None = None,
 ) -> tuple[EpisodeResult, list[dict]]:
     """跑一条实例的 ReAct 循环，返回 (结果, 完整消息历史)。tools 必须是已经绑好 env 的可调用对象。
 
@@ -558,6 +559,14 @@ def run_episode(
             step_schemas = select_tool_schemas(tool_schemas, declared)
             step_tools = {name: tool for name, tool in tools.items() if name in declared}
             retired = frozenset(tools) - frozenset(declared)
+
+        # 1.6 这一步要不要追加一条指令。**追加在尾部，绝不改 messages[0]** —— 改 system prompt 会让整棵
+        # 前缀缓存树作废，而追加不断前缀；`trim_messages` 只折叠 role=="tool"，所以它也不会被裁掉（决定 C25）。
+        # 这里只认「第几步追加什么」这张表，分几段、每段多长是调用方的事（agent/staged.py）。
+        if stage_notes is not None:
+            note = stage_notes.get(index)
+            if note is not None:
+                messages.append({"role": "system", "content": note})
 
         # 2. think：裁过的历史送进模型；撞上下文上限就裁到只剩最近一条再试，而不是直接放弃（决定 C11）
         call_started = time.monotonic()

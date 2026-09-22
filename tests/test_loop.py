@@ -9,6 +9,7 @@ from dataclasses import asdict
 import pytest
 
 from agent.loop import (
+    SYSTEM_PROMPT,
     ContextOverflow,
     LoopConfig,
     ModelReply,
@@ -60,11 +61,11 @@ def failing_tool(**_):
     )
 
 
-def episode(client, tools, *, tool_policy=None, **config_kwargs):
+def episode(client, tools, *, tool_policy=None, stage_notes=None, **config_kwargs):
     return run_episode(
         instance_id="x__x-1", problem_statement="an issue", tools=tools, client=client,
         tool_schemas=build_tool_schemas(), config=LoopConfig(**config_kwargs),
-        tool_policy=tool_policy,
+        tool_policy=tool_policy, stage_notes=stage_notes,
     )
 
 
@@ -601,3 +602,54 @@ def test_overflow_never_widens_a_zero_keep_full_window():
     full_after_overflow = [m for m in client.seen[-1] if m.get("role") == "tool"
                            and not m["content"].startswith("[observation elided")]
     assert full_after_overflow == []
+
+
+# ------------------------------------------------ 分段指令在尾部追加（决定 C25）
+
+def test_stage_notes_land_at_the_given_steps_and_nowhere_else():
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    _, messages = episode(client, ALL_TOOLS, max_steps=4,
+                          stage_notes={1: "<round>one</round>", 3: "<round>two</round>"})
+    assert [m["content"] for m in messages if m["role"] == "system"] == [
+        SYSTEM_PROMPT, "<round>one</round>", "<round>two</round>"]
+
+
+def test_a_stage_note_is_the_last_message_of_the_request_that_first_carries_it():
+    """追加必须落在尾部：插进历史中间就等于改了前缀，那一轮起的缓存全丢（决定 C25）。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    episode(client, ALL_TOOLS, max_steps=4, stage_notes={3: "<round>two</round>"})
+    carrying = [view for view in client.seen if any(m["content"] == "<round>two</round>" for m in view)]
+    assert len(carrying) == 2, "第 3、4 步的请求都该带着它"
+    assert carrying[0][-1]["content"] == "<round>two</round>", "它要在第 3 步那次请求的最末尾"
+
+
+def test_stage_notes_never_rewrite_the_system_prompt():
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    episode(client, ALL_TOOLS, max_steps=4, stage_notes={1: "a", 3: "b"})
+    assert {view[0]["content"] for view in client.seen} == {SYSTEM_PROMPT}, \
+        "messages[0] 全程不变，改它等于让整棵前缀缓存树作废"
+
+
+def test_a_stage_note_is_not_folded_away_by_trimming():
+    """裁剪只碰 role=='tool'，段指令是 system，裁到最狠也还在（决定 C25 + C24）。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    episode(client, ALL_TOOLS, max_steps=12, keep_full_observations=1, fold_batch=1,
+            stage_notes={1: "<round>one</round>"})
+    assert any(m["content"] == "<round>one</round>" for m in client.seen[-1])
+
+
+def test_not_passing_stage_notes_leaves_the_request_shape_alone():
+    """不传就是 09-21 之前的老路径：除了开头那条，一条 system 消息都不许多出来。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    _, messages = episode(client, ALL_TOOLS, max_steps=3)
+    assert [m["role"] for m in messages].count("system") == 1
+
+
+def test_the_tools_changed_notice_comes_before_the_round_note():
+    """同一步既换工具又换指令时，先告诉它工具变了，再给新指令 —— 指令里会提到那几个工具。"""
+    client = ScriptedClient([reply(call("read_file", path="a.py"))])
+    _, messages = episode(client, ALL_TOOLS, max_steps=4, tool_policy=drop_run_tests_from(3),
+                          stage_notes={3: "<round>two</round>"})
+    texts = [m["content"] for m in messages if m["role"] == "system"]
+    assert texts[1].startswith("<tools_changed>")
+    assert texts[2] == "<round>two</round>"

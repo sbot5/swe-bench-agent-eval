@@ -58,6 +58,72 @@
 | ⒝ **段边界怎么定** | 固定轮数切 · 还是由信号触发（如首次 `exit 0` 进 Implement） | **倾向固定轮数**。触发器自己跑间极差中位 13 轮（`pylint-4551` 四跑 20/17/36/25）【原文 `docs/EVAL-repair-gate-N.md`】，用它当边界等于往自变量里掺一个自己就在摆的量 |
 | ⒞ **三段各几轮** | —— | 【未知】，没有任何数据支持某个切法。定了就写进本节和指纹，两跑必须同一个切法 |
 
+#### 〔2026-09-22 定死，开跑前不许再改〕
+
+三处全定，外加一处 §2.1 原来没列、但 §四 第 5 条的指纹要求必须写死的（段→工具表）。**本节全程 $0。**
+
+| # | 定成什么 | 依据 |
+| --- | --- | --- |
+| ⒜ 指令怎么换 | **骨架 `system_prompt` + 段指令在消息尾部追加**，`messages[0]` 全程不变 | 文档原给的二选一**都不自洽**：原 `SYSTEM_PROMPT` 的「How to work」六步【原文 `agent/loop.py:172-182`，09-22 直读】**本身就是段指令要替换的东西**，只在尾部追加会让两套流程并存（P3 ⒜「只改第 3 条会让 prompt 自相矛盾」的同型）；中途改写 `messages[0]` 则每个段边界让整棵前缀树作废，而未命中单价是命中的 50 倍【原文 `EVAL-P2-rerun.md:125-143`】。骨架版**删掉六步、保留 grading rules 五条**，段指令追加在尾部 → 两个毛病都没有。另**已核**：`trim_messages` 只折叠 `role=="tool"` 的消息【原文 `agent/loop.py:386`，09-22 直读】，所以段指令不会被 C24 的折叠吃掉 |
+| ⒝ 段边界怎么定 | **固定轮数** | 照本节原倾向。**补一条更硬的**：触发器 T 不只是在摆（跑间极差中位 13 轮），`django-11138` **四跑全部 T=None**【原文 `EVAL-repair-gate-N.md`】→ 用信号当边界，那条实例**永远进不了 Implement 段** |
+| ⒞ 三段各几轮 | **Collect 1–12 · Implement 13–32 · Verify 33–40** | 原标【未知】。本次用已落盘轨迹 $0 算出数据底（`scripts/stage_budget.py`，p2-mine + p2-rerun 各 25 条）：**B 组（动过手的）首刀轮号两跑中位 9 / 11**，12 轮覆盖 **62% / 53%** —— 即「正常实例到这儿都已经动手了」；**首刀之后还要用的轮数中位 14.5 / 9**，所以 Implement 20 + Verify 8 = 28 有余量。⚠️ 这**不是最优解，是有据可查的一个点**：同 16 条配对的首刀轮号跑间差中位 4.5、**max 28**（㊾，量具自己也在摆） |
+| 段→工具表 | **Collect** `list_files search_code read_file run_python finish` · **Implement** `read_file run_python apply_patch run_tests git_diff finish` · **Verify** `read_file apply_patch run_tests git_diff finish` | **Collect 段摘掉 `apply_patch`** 是成分③ 的强制力所在 —— 不是靠指令劝住的（㊳：prompt 里加一条规则 ≠ 系统里多一条规则）；**Implement 起摘掉 `search_code`/`list_files`** 堵 H2 的考古向量；**`read_file` 三段都留**，摘掉读会打爆 `apply_patch` 的锚点匹配（gold 回放 66/66 那条性质靠它）；`finish` 必须全段留，否则 `_validated_declaration` 当场抛 `ValueError` |
+
+**指纹**（`PYTHONPATH=. .venv/bin/python -m agent.staged` 打印；改任何一段指令或切法它都会变）：
+
+- 切法 `[12, 32, 40]` · 追加点 `[1, 13, 33]`
+- `system_prompt_md5` = `f57fadb6fddfef93250c5713741c2032`
+- 段指令 md5：COLLECT `9ec2957a9006d33adfee8a3b430361cb` · IMPLEMENT `69df19e3bad5d065918bef53172d9379` · VERIFY `ea63acc47bd65fc17bcd405fbfea7a1f`
+
+⚠️ **定切法时发现一个判据缺口。§3.3 不改，缺口照实记下**：两条对照的**自然首刀轮号**是
+`django-14631` **25 / 38**、`sphinx-9711` **None / 22**（p2-mine 那一跑它根本没动手、本身就是 A 组成员）
+【推算 `scripts/stage_budget.py`，源数据 p2-mine / p2-rerun 轨迹】。→ **Collect 段那道闸（1–12 轮不给 `apply_patch`）
+切不到这两条**。所以「有没有把本来会动手的弄坏」这一问，本跑的对照**只覆盖得了 Implement 段摘 `search_code`/`list_files`
+那个成分，Collect 闸的误伤记【未知】**。要真正检验它得换首刀早的实例当对照（如 `django-11163` 4/4、
+`django-13512` 4/5），那要动已锁定的 §3.3/§3.4 —— **本人 09-22 拍板：不动，接受这个缺口。**
+这是 ㊿「判据锁定挡得住改阈值、挡不住判据本身漏了量」的**第二次实证**。
+
+**§2.2 那条线已于 09-22 接好**（§2.2 正文一个字不改，接法记在这里）：
+
+- `agent/staged.py` **新建** —— P4 这一次实验的全部内容（骨架 prompt、三段指令原文、切法常量、段→工具表、`tool_policy`、`fingerprint()`）
+- `agent/loop.py` 的 `run_episode` **加一个通用形参 `stage_notes: Mapping[int, str] | None`（决定 C25）** ——
+  它只认「第几步追加哪条消息」这张表，**不知道「三段」这回事**；追加点排在 `tool_policy` 之后，
+  所以同一步先出 `<tools_changed>` 再出 `<round>`（指令里会提到那几个工具，顺序反了就自相矛盾）
+- `agent/run.py` —— `run_instance` 把 `system_prompt` / `tool_policy` / `stage_notes` 透传给 `run_episode`；
+  `main` 加 `--staged`，并**校验 `--max-steps` 必须等于 40**（切法按 40 定死，对不上整批错位，当场 `parser.error`）；
+  指纹随 `summary.json` 落盘
+
+**§四 七条的状态**（全 $0）：
+
+1. ✅ 假 env **181 → 197**（`tests/test_staged.py` 10 条 + `test_loop.py` 分段追加 6 条）· 真容器 **21** 全过 ·
+   `ruff check agent tests` **18** 条，**逐文件与 HEAD 对比零新增**（`run.py` 4→4、`loop.py` 2→2，两个新文件 0）。
+   ⚠️ **已纠正的错误（不静默改）**：`Career/04-项目/CLAUDE.md` 与各 DESIGN 里反复记的「ruff `agent tests` 仍 **15**」
+   与 09-22 实测的 HEAD **18** 对不上，**差额来源【未知】**；本次没有动任何既有 lint，只是照实记下这个对不上
+2. ✅ gold 回放 **25/25、0 编辑失败**，`preds.json` 与 **y12 / c21 / p3 三次历史基线逐字节相同**（`scripts/preds_diff.py`）。
+   ⚠️ 照 §四 原话，这条**证不了本次改动** —— 假模型不看工具表【原文 `tests/gold_replay.py:72-75`】，
+   它只保证「不传 `stage_notes`/`tool_policy` 时老路径没变」
+3. ✅ 冒烟**改成 $0 版**：`scripts/p4_preflight.py` 用假模型跑满 40 步，打印指纹、逐步声明的工具集、三段指令原文，
+   并自检 **6 条全过**（`messages[0]` 全程没被改写 · 三条段指令按序到位、一条不多一条不少 ·
+   其余 system 消息只有工具变更通知 · 每步工具集 = 该步所属段 · Collect 拿不到 `apply_patch` ·
+   Implement/Verify 拿不到 `search_code`）。⚠️ 它**证不了模型会不会照做** —— 那是真跑才能答的，判据在 §三
+4. ⬜ 10 条 `NetworkMode=none` 全覆盖 —— **跑时执行**，逐容器 `docker inspect`
+5. ✅ 指纹已写进本节
+6. ✅ 余额 **09-22 11:51 北京重读 ¥36.73**，与 09-20 收敛读数**同值** → 本次全程 $0 得到独立确认。
+   ⚠️ 顺带修掉一个**已经坏掉的工具**：`~/env.sh` 里 `.env` 的路径还停在 **09-20 目录重组前**的
+   `Career/07-swe-bench-agent/`，实际在 `Career/04-项目/` —— 不修根本查不了余额（本次已改，`~/env.sh` 不在任何仓库里）
+7. ⬜ 判据与本次改动 commit 后即成立
+
+**开跑脚本**：`scripts/p4_run.sh`，照 `p3_run.sh` 逐行改写（同一个 `groupa_ids.txt` 10 条 = A 组 8 + 对照 2、
+同一套 `NetworkMode` watcher、同样跑两遍 `p4-r1`/`p4-r2`），**唯一差异是多了 `--staged`**。
+
+```bash
+wsl -d swebench -e bash -lc 'bash /home/zixu/swe-bench-eval/scripts/p4_run.sh'
+```
+
+⚠️ **排空闲时段再跑**：09-22 11:51 北京正在高峰（工作日 9–12 / 14–18 高峰，其余含周末半价）。
+⚠️ `--max-steps` 不传就是默认 **40**【原文 `agent/loop.py:16`】，正好等于切法要求的总轮数；
+传了别的值 `--staged` 会当场 `parser.error`。
+
 ### 2.2 开跑前必须先接的一处线（现在还没接）
 
 `run_episode` 的形参里 `system_prompt`（`loop.py:514`）和 `tool_policy`（`loop.py:515`）都已经有了【原文】，

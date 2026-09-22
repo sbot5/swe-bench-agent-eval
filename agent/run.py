@@ -15,7 +15,7 @@ import shlex
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from functools import partial
@@ -23,7 +23,16 @@ from pathlib import Path
 from typing import Any, Final
 
 from agent.environment import DockerEnvironment
-from agent.loop import EpisodeResult, LoopConfig, ModelClient, StopReason, build_tool_schemas, run_episode
+from agent.loop import (
+    SYSTEM_PROMPT,
+    EpisodeResult,
+    LoopConfig,
+    ModelClient,
+    StopReason,
+    ToolPolicy,
+    build_tool_schemas,
+    run_episode,
+)
 from agent.tools import apply_patch, git_diff, list_files, read_file, run_python, run_tests, search_code
 
 DATASET: Final[str] = "SWE-bench/SWE-bench_Verified"
@@ -140,6 +149,9 @@ def run_instance(
     client_factory: Callable[[], ModelClient],
     config: LoopConfig,
     out_dir: Path,
+    system_prompt: str = SYSTEM_PROMPT,
+    tool_policy: ToolPolicy | None = None,
+    stage_notes: Mapping[int, str] | None = None,
 ) -> dict[str, Any]:
     """跑一条实例：起容器 -> 循环 -> 取 patch -> 落盘 trajectory。返回 summary 的一行。
 
@@ -161,6 +173,9 @@ def run_instance(
                 client=client_factory(),
                 tool_schemas=build_tool_schemas(hint),
                 config=config,
+                system_prompt=system_prompt,
+                tool_policy=tool_policy,
+                stage_notes=stage_notes,
             )
             patch = extract_patch(env)
     except Exception as exc:
@@ -225,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cost-limit", type=float, default=LoopConfig.cost_limit)
     parser.add_argument("--wall-clock-limit", type=float, default=LoopConfig.wall_clock_limit)
     parser.add_argument("--overwrite", action="store_true", help="重跑已经有 trajectory 的实例")
+    parser.add_argument("--staged", action="store_true",
+                        help="P4 分阶段 Round：骨架 system prompt + 三段指令 + 逐段工具表（agent/staged.py）")
     args = parser.parse_args(argv)
 
     from agent.model import DEFAULT_MODEL, LiteLLMClient
@@ -242,6 +259,24 @@ def main(argv: list[str] | None = None) -> int:
 
     config = LoopConfig(max_steps=args.max_steps, cost_limit=args.cost_limit,
                         wall_clock_limit=args.wall_clock_limit)
+
+    # --staged 的切法是按 40 轮定死的（agent/staged.py 的常量）。max_steps 对不上就整批错位，
+    # 与其跑完一批才发现段边界落在别处，不如当场炸掉（同 _validated_declaration 的理由）。
+    staged_kwargs: dict[str, Any] = {}
+    staged_fingerprint: dict[str, Any] | None = None
+    if args.staged:
+        from agent import staged
+
+        if args.max_steps != staged.TOTAL_STEPS:
+            parser.error(f"--staged 的切法按 {staged.TOTAL_STEPS} 轮定死，"
+                         f"--max-steps={args.max_steps} 会让段边界错位")
+        staged_kwargs = {"system_prompt": staged.SKELETON_SYSTEM_PROMPT,
+                         "tool_policy": staged.tool_policy,
+                         "stage_notes": staged.STAGE_NOTES}
+        staged_fingerprint = staged.fingerprint()
+        print(f"staged: cut={staged_fingerprint['cut']} "
+              f"system_prompt_md5={staged_fingerprint['system_prompt_md5']}", flush=True)
+
     print(f"run-id={args.run_id} model={model} instances={len(instances)} workers={args.workers}", flush=True)
 
     lock = threading.Lock()
@@ -261,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             (out_dir / "preds.json").write_text(json.dumps(preds, indent=2), encoding="utf-8")
             (out_dir / "summary.json").write_text(
                 json.dumps({"run_id": args.run_id, "model": model, "config": asdict(config),
+                            "staged": staged_fingerprint,
                             "elapsed_seconds": round(time.time() - started, 1),
                             "instances": sorted(rows, key=lambda item: item["instance_id"])},
                            indent=2, ensure_ascii=False),
@@ -275,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         futures = {
             pool.submit(run_instance, instance,
                         client_factory=lambda: LiteLLMClient(model),
-                        config=config, out_dir=out_dir): instance["instance_id"]
+                        config=config, out_dir=out_dir, **staged_kwargs): instance["instance_id"]
             for instance in instances
         }
         for future in as_completed(futures):
