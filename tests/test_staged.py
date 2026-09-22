@@ -83,13 +83,32 @@ def test_the_skeleton_prompt_dropped_the_six_step_recipe_but_kept_the_grading_ru
     assert "three rounds" in staged.SKELETON_SYSTEM_PROMPT
 
 
-def test_the_fingerprint_changes_when_an_instruction_changes():
-    """指纹是跑前抄进 EVAL 文档的那串；它不随内容变，两跑就分不清跑的是不是同一个配置。"""
+def test_the_fingerprint_changes_when_the_instruction_the_loop_actually_gets_changes():
+    """改的必须是 `STAGE_NOTES`，不是 `ROUND_*` 常量 —— 循环收到的是前者。
+
+    头一版这条测试改的是常量，于是「直接改 STAGE_NOTES 的文本」能换掉发给模型的指令
+    而指纹纹丝不动，测试却照样绿（Codex 09-22 MINOR-1）。
+    """
     before = staged.fingerprint()
-    original = staged.ROUND_COLLECT
+    original = dict(staged.STAGE_NOTES)
     try:
-        staged.ROUND_COLLECT = original + "one more line\n"
-        assert staged.fingerprint()["round_md5"]["COLLECT"] != before["round_md5"]["COLLECT"]
+        staged.STAGE_NOTES[1] = original[1] + "one more line\n"
+        assert staged.fingerprint()["stage_notes_md5"]["1"] != before["stage_notes_md5"]["1"]
     finally:
-        staged.ROUND_COLLECT = original
+        staged.STAGE_NOTES.clear()
+        staged.STAGE_NOTES.update(original)
+    assert staged.fingerprint() == before
+
+
+def test_the_fingerprint_changes_when_a_tool_description_changes():
+    """请求里发的是完整 schema，不是工具名。描述或参数改了，`stage_tools` 那张名字表看不出来。"""
+    from agent import loop
+
+    before = staged.fingerprint()
+    original = loop._TOOL_SCHEMAS[0]["description"]
+    try:
+        loop._TOOL_SCHEMAS[0]["description"] = original + " (reworded)"
+        assert staged.fingerprint()["tool_schema_template_md5"] != before["tool_schema_template_md5"]
+    finally:
+        loop._TOOL_SCHEMAS[0]["description"] = original
     assert staged.fingerprint() == before

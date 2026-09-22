@@ -77,11 +77,22 @@ run_tests git_diff finish`，**集合对、顺序错**。`select_tool_schemas` �
 **当时 197 条测试全绿** —— 因为原来的断言比的是集合。现已改成比列表，并新增
 `test_every_stage_lists_its_tools_in_the_canonical_schema_order` 钉死。又一次「测试绿不等于口径对」。
 
-**指纹**（`PYTHONPATH=. .venv/bin/python -m agent.staged` 打印；改任何一段指令或切法它都会变）：
+**指纹**（`PYTHONPATH=. .venv/bin/python -m agent.staged` 打印；两跑的指纹必须逐字相同）：
 
-- 切法 `[12, 32, 40]` · 追加点 `[1, 13, 33]`
+- 切法 `[12, 32, 40]`
 - `system_prompt_md5` = `f57fadb6fddfef93250c5713741c2032`
-- 段指令 md5：COLLECT `9ec2957a9006d33adfee8a3b430361cb` · IMPLEMENT `69df19e3bad5d065918bef53172d9379` · VERIFY `ea63acc47bd65fc17bcd405fbfea7a1f`
+- `stage_notes_md5`：step 1 `9ec2957a9006d33adfee8a3b430361cb` · step 13 `69df19e3bad5d065918bef53172d9379` ·
+  step 33 `ea63acc47bd65fc17bcd405fbfea7a1f`
+- `tool_schema_template_md5` = `7a7bc0adddc6c9f041bc89d86f14f9c7`
+- `stage_tools` 见上表
+
+⚠️ **已纠正的错误（不静默改）**：指纹头一版哈希的是 `ROUND_*` **常量**、只记 `stage_notes_at` 的**键位**，
+而循环真正收到的是 `STAGE_NOTES` —— 直接改它的文本就能换掉发给模型的指令而**指纹纹丝不动**；
+同样，请求里发的是 `build_tool_schemas(hint)` 的**完整 schema**，工具描述或参数改了，`stage_tools`
+那张名字表也看不出来。现已改成直接哈希 `STAGE_NOTES` 的值 + 工具 schema 模板（`TARGET_HINT` 替换前）。
+配套的 mutation test 也从「改常量」改成「改 `STAGE_NOTES[1]`」并新增一条改工具描述的。
+**另**：`summary.json` 现在记 `commit`（`git rev-parse HEAD`）—— 指纹只盖得住 staged 那几样，
+`agent/` 其余任何改动都盖不住，而跨会话最容易发生的就是那种。
 
 ⚠️ **定切法时发现一个判据缺口。§3.3 不改，缺口照实记下**：两条对照的**自然首刀轮号**是
 `django-14631` **25 / 38**、`sphinx-9711` **None / 22**（p2-mine 那一跑它根本没动手、本身就是 A 组成员）
@@ -103,7 +114,7 @@ run_tests git_diff finish`，**集合对、顺序错**。`select_tool_schemas` �
 
 **§四 七条的状态**（全 $0）：
 
-1. ✅ 假 env **181 → 197**（`tests/test_staged.py` 10 条 + `test_loop.py` 分段追加 6 条）· 真容器 **21** 全过 ·
+1. ✅ 假 env **181 → 199**（`tests/test_staged.py` 12 条 + `test_loop.py` 分段追加 6 条）· 真容器 **21** 全过 ·
    `ruff check agent tests` **18** 条，**逐文件与 HEAD 对比零新增**（`run.py` 4→4、`loop.py` 2→2，两个新文件 0）。
    ⚠️ **已纠正的错误（不静默改）**：`Career/04-项目/CLAUDE.md` 与各 DESIGN 里反复记的「ruff `agent tests` 仍 **15**」
    与 09-22 实测的 HEAD **18** 对不上，**差额来源【未知】**；本次没有动任何既有 lint，只是照实记下这个对不上
@@ -120,7 +131,20 @@ run_tests git_diff finish`，**集合对、顺序错**。`select_tool_schemas` �
 6. ✅ 余额 **09-22 11:51 北京重读 ¥36.73**，与 09-20 收敛读数**同值** → 本次全程 $0 得到独立确认。
    ⚠️ 顺带修掉一个**已经坏掉的工具**：`~/env.sh` 里 `.env` 的路径还停在 **09-20 目录重组前**的
    `Career/07-swe-bench-agent/`，实际在 `Career/04-项目/` —— 不修根本查不了余额（本次已改，`~/env.sh` 不在任何仓库里）
-7. ⬜ 判据与本次改动 commit 后即成立
+7. ✅ 判据与本次改动已 commit，`git status` 干净
+
+**Codex 二审（gpt-5.6-terra，报告 `.agent/reviews/20260922-135907-…md`）：BLOCKER 无、MAJOR 3 + MINOR 2，
+五条全部成立、当天修完。**又一次是在**全部测试绿、preflight 六条也全过之后**才被审出来的：
+
+- **MAJOR-1** `p4_run.sh` 固定 `p4-r1`/`p4-r2` 却没传 `--overwrite`，而 `run.py` 默认**跳过**已有 trajectory
+  的实例 → 中断后重跑脚本，旧产物会混进 `preds`/`summary`/评测，两跑比较当场失真。
+  改成 **fail-closed**：输出目录非空即退出，不做隐式复用
+- **MAJOR-2** 指纹没盖住真正发出去的东西（详见上方「已纠正的错误」）
+- **MAJOR-3** runner 存了 `rc` 只打印不判断，agent 失败后照样评测、照样跑第二跑 → 会产出一份
+  **看起来完整**的实验日志。改成三道 fail-closed（agent 退出码 · trajectory 条数等于名单条数 ·
+  评测退出码），并用 `trap` 回收 watcher
+- **MINOR-1 / MINOR-2** 两条测试断言比它声称钉住的性质弱：一条改的是常量而非循环实际收到的
+  `STAGE_NOTES`，一条只比最终 `messages` 而没看边界那一轮的**请求**。都已改成钉真对象
 
 **开跑脚本**：`scripts/p4_run.sh`，照 `p3_run.sh` 逐行改写（同一个 `groupa_ids.txt` 10 条 = A 组 8 + 对照 2、
 同一套 `NetworkMode` watcher、同样跑两遍 `p4-r1`/`p4-r2`），**唯一差异是多了 `--staged`**。

@@ -28,6 +28,15 @@ run_one () {
   echo "=============================== $RID ==============================="
   echo "run-id=$RID model=openai/deepseek-flash max-steps=40(默认) workers=4 instances=groupa_ids.txt(10) --staged"
 
+  # fail-closed ①：输出目录非空就退出，绝不隐式复用。
+  # run.py 默认**跳过**已经有 trajectory 的实例（--overwrite 才重跑），所以中断后直接重跑这个脚本，
+  # 旧实例会被跳过，preds/summary/评测里就混进了上一次（可能是别的配置）的产物，两跑比较当场失真。
+  # 真要重跑，换一个人工确认过的新 run-id，或先自己把目录挪走。
+  if [ -n "$(ls -A results/inference/$RID 2>/dev/null)" ]; then
+    echo "FATAL: results/inference/$RID 非空。换新 run-id，或先把它挪走 —— 不做隐式复用。" >&2
+    exit 1
+  fi
+
   # watcher：逐个抓 NetworkMode，证明不是只有一个容器断了网（P1 立的规矩，§四 第 4 条）
   ( : > ~/${RID}_inspect.txt
     for i in $(seq 1 900); do
@@ -38,6 +47,7 @@ run_one () {
       sleep 2
     done ) &
   WATCHER=$!
+  trap 'kill $WATCHER 2>/dev/null' EXIT  # 任何一条 fail-closed 退出都别把 watcher 留成孤儿
 
   echo "跑前余额: $(bash ~/s5_balance.sh)"
   TZ=Asia/Shanghai date +"start 北京 %F %T %a"
@@ -57,12 +67,33 @@ run_one () {
   echo "=== 容器网络设置（去重）==="
   sort -u ~/${RID}_inspect.txt
   echo "=== 共 $(sort -u ~/${RID}_inspect.txt | wc -l) 个容器，NetworkMode=none $(grep -c 'NetworkMode=none' ~/${RID}_inspect.txt) 条 ==="
+
+  # fail-closed ②：agent 挂了就停在这里。继续往下跑，只会拿残缺产物评测出一份
+  # 看起来完整的实验日志，而那正是最难事后发现的一类错。
+  if [ $rc -ne 0 ]; then
+    echo "FATAL: agent.run 退出码 $rc，$RID 不评测、第二跑不启动。" >&2
+    exit $rc
+  fi
+
+  # fail-closed ③：评测之前先确认这一跑真的覆盖了 groupa_ids.txt 的每一条
+  want=$(grep -c . groupa_ids.txt)
+  got=$(ls results/inference/$RID/*.traj.json 2>/dev/null | wc -l)
+  if [ "$got" -ne "$want" ]; then
+    echo "FATAL: $RID 只有 $got 条 trajectory，期望 $want 条。" >&2
+    exit 1
+  fi
+
   echo "=== 逐条读数 ==="
-  PYTHONPATH=. .venv/bin/python scripts/p2_rerun_check.py $RID
+  PYTHONPATH=. .venv/bin/python scripts/p2_rerun_check.py $RID || { echo "FATAL: 读数脚本失败" >&2; exit 1; }
 
   echo "=== 评测 $RID ==="
   .venv/bin/swebench eval verified -p results/inference/$RID/preds.json --run-id $RID -j 6
-  echo "评测退出码: $?"
+  erc=$?
+  echo "评测退出码: $erc"
+  if [ $erc -ne 0 ]; then
+    echo "FATAL: $RID 评测退出码 $erc，第二跑不启动。" >&2
+    exit $erc
+  fi
   echo "评测后余额: $(bash ~/s5_balance.sh)"
 }
 

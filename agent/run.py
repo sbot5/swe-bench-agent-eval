@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -260,6 +261,15 @@ def main(argv: list[str] | None = None) -> int:
     config = LoopConfig(max_steps=args.max_steps, cost_limit=args.cost_limit,
                         wall_clock_limit=args.wall_clock_limit)
 
+    # 产物得说得出自己是哪一版代码跑的：指纹只盖得住 staged 那几样，`agent/` 其余任何改动都盖不住。
+    # 取不到就记 None 不记空串（同 ㉖ 的口径：None = 没拿到，不是「没有 commit」）。
+    try:
+        source_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT_DIR,
+                                       capture_output=True, text=True, timeout=10,
+                                       check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):  # git 不在、不是仓库、超时 —— 都不该让一整批跑不起来
+        source_commit = None
+
     # --staged 的切法是按 40 轮定死的（agent/staged.py 的常量）。max_steps 对不上就整批错位，
     # 与其跑完一批才发现段边界落在别处，不如当场炸掉（同 _validated_declaration 的理由）。
     staged_kwargs: dict[str, Any] = {}
@@ -296,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             (out_dir / "preds.json").write_text(json.dumps(preds, indent=2), encoding="utf-8")
             (out_dir / "summary.json").write_text(
                 json.dumps({"run_id": args.run_id, "model": model, "config": asdict(config),
-                            "staged": staged_fingerprint,
+                            "commit": source_commit, "staged": staged_fingerprint,
                             "elapsed_seconds": round(time.time() - started, 1),
                             "instances": sorted(rows, key=lambda item: item["instance_id"])},
                            indent=2, ensure_ascii=False),

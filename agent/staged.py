@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Final
 
-from agent.loop import EpisodeResult
+from agent.loop import _TOOL_SCHEMAS, EpisodeResult
 
 # 切法【判断 2026-09-22 定，依据 `scripts/stage_budget.py` 的 $0 读数】：
 # B 组（会动手的实例）首刀轮号两跑中位 9 / 11，12 轮覆盖 62% / 53% —— 即「正常实例到这儿都动手了」；
@@ -137,21 +138,24 @@ def _md5(text: str) -> str:
 
 
 def fingerprint() -> dict[str, object]:
-    """§四 第 5 条要求写进文件的指纹：改了任何一段指令或切法，这里的 md5 就变。"""
+    """§四 第 5 条要求写进文件的指纹：任何会改变请求形状的东西变了，这里就得跟着变。
+
+    ⚠️ **哈希的是 `STAGE_NOTES` 的值，不是 `ROUND_*` 常量** —— 循环真正收到的是前者。
+    头一版哈希常量，于是「直接改 `STAGE_NOTES` 的文本」能改掉发给模型的指令而指纹纹丝不动
+    （Codex 09-22 报的 MAJOR-2 / MINOR-1）。
+
+    ⚠️ **工具 schema 模板也进指纹**：请求里发的是 `build_tool_schemas(hint)` 的产物，
+    工具描述或参数 schema 改了，`stage_tools` 那张名字表看不出来，但请求已经不是同一个了。
+    模板里的 `TARGET_HINT` 是逐实例替换的，所以哈希的是**替换前的模板**。
+    """
     return {
         "cut": [COLLECT_END, IMPLEMENT_END, TOTAL_STEPS],
         "system_prompt_md5": _md5(SKELETON_SYSTEM_PROMPT),
-        "round_md5": {
-            "COLLECT": _md5(ROUND_COLLECT),
-            "IMPLEMENT": _md5(ROUND_IMPLEMENT),
-            "VERIFY": _md5(ROUND_VERIFY),
-        },
+        "stage_notes_md5": {str(step): _md5(note) for step, note in sorted(STAGE_NOTES.items())},
         "stage_tools": {stage: list(names) for stage, names in STAGE_TOOLS.items()},
-        "stage_notes_at": sorted(STAGE_NOTES),
+        "tool_schema_template_md5": _md5(json.dumps(_TOOL_SCHEMAS, sort_keys=True, ensure_ascii=False)),
     }
 
 
 if __name__ == "__main__":  # python3 -m agent.staged 打印指纹，跑前抄进 EVAL 文档
-    import json
-
     print(json.dumps(fingerprint(), indent=2, ensure_ascii=False))

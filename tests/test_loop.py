@@ -646,10 +646,18 @@ def test_not_passing_stage_notes_leaves_the_request_shape_alone():
 
 
 def test_the_tools_changed_notice_comes_before_the_round_note():
-    """同一步既换工具又换指令时，先告诉它工具变了，再给新指令 —— 指令里会提到那几个工具。"""
+    """同一步既换工具又换指令时，先告诉它工具变了，再给新指令 —— 指令里会提到那几个工具。
+
+    ⚠️ 断言落在**第 3 步那次请求**上，不是落在跑完的 `messages` 上：只比最终历史的话，
+    把两条消息都挪到 `complete()` 之后照样能过，而边界那一轮模型其实什么也没看见
+    （Codex 09-22 MINOR-2）。
+    """
     client = ScriptedClient([reply(call("read_file", path="a.py"))])
-    _, messages = episode(client, ALL_TOOLS, max_steps=4, tool_policy=drop_run_tests_from(3),
-                          stage_notes={3: "<round>two</round>"})
-    texts = [m["content"] for m in messages if m["role"] == "system"]
+    episode(client, ALL_TOOLS, max_steps=4, tool_policy=drop_run_tests_from(3),
+            stage_notes={3: "<round>two</round>"})
+    boundary = client.seen[2]  # 第 3 步发出去的那次请求
+    texts = [m["content"] for m in boundary if m["role"] == "system"]
     assert texts[1].startswith("<tools_changed>")
     assert texts[2] == "<round>two</round>"
+    assert boundary[-1]["content"] == "<round>two</round>", "新指令要在这次请求的最末尾"
+    assert "run_tests" not in client.seen_tools[2], "这一轮的工具表就该是新段的"
