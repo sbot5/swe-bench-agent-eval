@@ -1,0 +1,52 @@
+{
+  "django__django-11138": {
+    "instance_id": "django__django-11138",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-8898": {
+    "instance_id": "pylint-dev__pylint-8898",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "pylint-dev__pylint-4551": {
+    "instance_id": "pylint-dev__pylint-4551",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/pylint/pyreverse/utils.py b/pylint/pyreverse/utils.py\nindex a24d227e..bb6923e0 100644\n--- a/pylint/pyreverse/utils.py\n+++ b/pylint/pyreverse/utils.py\n@@ -20,9 +20,36 @@ import os\n import re\n import sys\n \n+import astroid\n+\n RCFILE = \".pyreverserc\"\n \n \n+def get_annotation_label(annotation):\n+    \"\"\"Return the label of an annotation.\n+\n+    The label is the name of the annotation, e.g. ``str`` for ``str`` or\n+    ``Optional[str]`` for ``Optional[str]``.\n+    \"\"\"\n+    if isinstance(annotation, astroid.BinOp):\n+        return \"{} | {}\".format(\n+            get_annotation_label(annotation.left),\n+            get_annotation_label(annotation.right),\n+        )\n+    if isinstance(annotation, astroid.Subscript):\n+        return \"{}[{}]\".format(\n+            get_annotation_label(annotation.value),\n+            get_annotation_label(annotation.slice),\n+        )\n+    if isinstance(annotation, astroid.Name):\n+        return annotation.name\n+    if isinstance(annotation, astroid.Attribute):\n+        return annotation.attrname\n+    if isinstance(annotation, astroid.Const) and isinstance(annotation.value, str):\n+        return annotation.value\n+    return annotation.as_string()\n+\n+\n def get_default_options():\n     \"\"\"Read config file and return list of options.\"\"\"\n     options = []\ndiff --git a/pylint/pyreverse/writer.py b/pylint/pyreverse/writer.py\nindex 0d80bb9c..f6776a43 100644\n--- a/pylint/pyreverse/writer.py\n+++ b/pylint/pyreverse/writer.py\n@@ -19,7 +19,7 @@\n import os\n \n from pylint.graph import DotBackend\n-from pylint.pyreverse.utils import is_exception\n+from pylint.pyreverse.utils import get_annotation_label, is_exception\n from pylint.pyreverse.vcgutils import VCGPrinter\n \n \n@@ -134,10 +134,18 @@ class DotWriter(DiagramWriter):\n         if not self.config.only_classnames:\n             label = r\"{}|{}\\l|\".format(label, r\"\\l\".join(obj.attrs))\n             for func in obj.methods:\n-                if func.args.args:\n-                    args = [arg.name for arg in func.args.args if arg.name != \"self\"]\n-                else:\n-                    args = []\n+                args = []\n+                for arg in func.args.args:\n+                    if arg.name == \"self\":\n+                        continue\n+                    if arg.annotation is not None:\n+                        args.append(\n+                            \"{}: {}\".format(\n+                                arg.name, get_annotation_label(arg.annotation)\n+                            )\n+                        )\n+                    else:\n+                        args.append(arg.name)\n                 label = r\"{}{}({})\\l\".format(label, func.name, \", \".join(args))\n             label = \"{%s}\" % label\n         if is_exception(obj.node):\n"
+  },
+  "django__django-10554": {
+    "instance_id": "django__django-10554",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-11510": {
+    "instance_id": "sphinx-doc__sphinx-11510",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sphinx-doc__sphinx-8638": {
+    "instance_id": "sphinx-doc__sphinx-8638",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  },
+  "sympy__sympy-18211": {
+    "instance_id": "sympy__sympy-18211",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sympy/core/relational.py b/sympy/core/relational.py\nindex f581bfa3c4..9e54266d56 100644\n--- a/sympy/core/relational.py\n+++ b/sympy/core/relational.py\n@@ -389,10 +389,14 @@ def __nonzero__(self):\n     def _eval_as_set(self):\n         # self is univariate and periodicity(self, x) in (0, None)\n         from sympy.solvers.inequalities import solve_univariate_inequality\n+        from sympy.sets.conditionset import ConditionSet\n         syms = self.free_symbols\n         assert len(syms) == 1\n         x = syms.pop()\n-        return solve_univariate_inequality(self, x, relational=False)\n+        try:\n+            return solve_univariate_inequality(self, x, relational=False)\n+        except NotImplementedError:\n+            return ConditionSet(x, self, S.Reals)\n \n     @property\n     def binary_symbols(self):\n"
+  },
+  "sympy__sympy-17630": {
+    "instance_id": "sympy__sympy-17630",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sympy/matrices/expressions/matexpr.py b/sympy/matrices/expressions/matexpr.py\nindex fd1e6d970a..547c804a27 100755\n--- a/sympy/matrices/expressions/matexpr.py\n+++ b/sympy/matrices/expressions/matexpr.py\n@@ -627,7 +627,9 @@ def _postprocessor(expr):\n                 # manipulate them like non-commutative scalars.\n                 return cls._from_args(nonmatrices + [mat_class(*matrices).doit(deep=False)])\n \n-        return mat_class(cls._from_args(nonmatrices), *matrices).doit(deep=False)\n+        if nonmatrices:\n+            return mat_class(cls._from_args(nonmatrices), *matrices).doit(deep=False)\n+        return mat_class(*matrices).doit(deep=False)\n     return _postprocessor\n \n \n"
+  },
+  "sphinx-doc__sphinx-9711": {
+    "instance_id": "sphinx-doc__sphinx-9711",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": "diff --git a/sphinx/extension.py b/sphinx/extension.py\nindex 7ec6c8518..16a245cc5 100644\n--- a/sphinx/extension.py\n+++ b/sphinx/extension.py\n@@ -10,6 +10,8 @@\n \n from typing import TYPE_CHECKING, Any, Dict\n \n+from packaging.version import InvalidVersion, Version\n+\n from sphinx.config import Config\n from sphinx.errors import VersionRequirementError\n from sphinx.locale import __\n@@ -51,13 +53,27 @@ def verify_needs_extensions(app: \"Sphinx\", config: Config) -> None:\n                               'but it is not loaded.'), extname)\n             continue\n \n-        if extension.version == 'unknown version' or reqversion > extension.version:\n+        if extension.version == 'unknown version' or _is_older_than(extension.version,\n+                                                                    reqversion):\n             raise VersionRequirementError(__('This project needs the extension %s at least in '\n                                              'version %s and therefore cannot be built with '\n                                              'the loaded version (%s).') %\n                                           (extname, reqversion, extension.version))\n \n \n+def _is_older_than(version: str, reqversion: str) -> bool:\n+    \"\"\"Return True if *version* does not satisfy the minimum *reqversion*.\n+\n+    Versions are compared using PEP 440 semantics (so that, for example,\n+    ``0.10`` is newer than ``0.6``).  If either version cannot be parsed as a\n+    PEP 440 version, fall back to a plain string comparison.\n+    \"\"\"\n+    try:\n+        return Version(version) < Version(reqversion)\n+    except InvalidVersion:\n+        return version < reqversion\n+\n+\n def setup(app: \"Sphinx\") -> Dict[str, Any]:\n     app.connect('config-inited', verify_needs_extensions, priority=800)\n \n"
+  },
+  "django__django-14631": {
+    "instance_id": "django__django-14631",
+    "model_name_or_path": "openai/deepseek-flash",
+    "model_patch": ""
+  }
+}

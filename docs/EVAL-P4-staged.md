@@ -292,4 +292,241 @@ for k in (2,3,4,5,6): print(k, round(comb(16,k)/comb(40,k),5))
 
 ## 八、结果（跑完往下补；以上各节不许改）
 
-_（未开跑）_
+〔2026-09-22 跑完补写。**§〇–§七 一字未改**。本节内若发现写错，留「已纠正」条目，不静默改。〕
+
+### 8.0 一句话
+
+**主判据过线，但过线的方式不是设计的那个方式。**
+
+分阶段 Round 把 A 组从「三跑 24/24 从未动手」变成 **7/16 动手**（固定边际精确检验单侧 **p = 0.00061**，
+远过 §3.1 锁定的 ≥5/16 且两跑各 ≥2）。但：
+
+- **5/7 的首刀落在 Verify 段开始后的 2–6 轮内**，而 `apply_patch` 早在**轮 13**（Implement 段开始）就已放开
+  —— 它整整拖了 22 轮不用（§8.3）
+- 同期 **Implement 段的考古率不降反升**，三把尺子同向，按 §3.5 预锁读法判为「**指令没被遵守**」（§8.5）
+
+→ 按 §二「一个复合变量，三个成分，不许拆开归功」，结论只能写成
+「**这个复合干预让 A 组动手数从 0/24 变成 7/16**」，**不许写成「分阶段设计有效」**；
+按 §3.5，「**分阶段能不能拦住它**」**仍然未被检验**。
+
+### 8.1 元信息
+
+| 项 | 值 |
+| --- | --- |
+| 时间 | AEST 2026-09-22 14:57–15:23（**北京 12:57–13:23，空闲时段**） |
+| 退出码 | 0（两跑推理 + 两次评测，fail-closed 三道闸未触发） |
+| 样本 | A 组 8 + 对照 2 = 10 条 × 2 跑，`--max-steps 40`，`--staged` |
+| infra / error | **0 / 0**（两跑） |
+| 容器断网 | `NetworkMode=none` **10/10**（两跑，`p4_run.sh` 逐容器 `docker inspect`，§四 第 4 条） |
+| ㉖ 三列 | **0 轮 None**（r1 377 轮 / r2 361 轮，按 `step["index"]` 去重后） |
+| 成本 | 余额 **¥36.73 → ¥31.23 = ¥5.50**，§五 预算 ≈¥5.8【推算】命中 |
+| 延迟结算 | 15:24 中途读数 ¥31.74 → 16:17 收敛 ¥31.23，**¥0.51 占 9.3%**（P1 20% · P2 8% · 重跑 10%） |
+| 余额 | **¥31.23**，空闲价约还够 **5 次** |
+
+### 8.2 §3.1 主判据：**过线**
+
+| | A 组动手数 | 动手的实例 |
+| --- | ---: | --- |
+| 基线三跑（s5-mine / p2-mine / p2-rerun） | **0/24** | — |
+| P3 两跑 | 2/16 | `sphinx-8638`(r1) · `sympy-18211`(r2) |
+| **P4 r1** | **4/8** | `pylint-8898` · `sphinx-11510` · `sympy-17630` · `sympy-18211` |
+| **P4 r2** | **3/8** | `pylint-4551` · `sympy-17630` · `sympy-18211` |
+| **P4 合计** | **7/16** | 去重 **5/8 条**实例至少动手过一次 |
+
+阈值 ≥5/16 且两跑各 ≥2 —— **两条都满足**（4 和 3）。单侧 p = C(16,7)/C(40,7) = **0.00061**。
+
+⚠️ **⑦⑨ 第六次实证**：两跑都动手的只有 `sympy-17630`、`sympy-18211` **2 条**，
+**换位 3 条**（r1 的 `pylint-8898`/`sphinx-11510` 在 r2 归零，r2 的 `pylint-4551` 在 r1 归零）。
+
+### 8.3 §3.1 的补量：首刀落在哪个段（**判据没锁这个量**）
+
+| 跑 | 实例 | 首刀轮 | 段 | 距 Implement 开始 | 距 Verify 开始 |
+| --- | --- | ---: | --- | ---: | ---: |
+| r1 | `pylint-8898` | 34 | VERIFY | +22 | **+2** |
+| r1 | `sphinx-11510` | 35 | VERIFY | +23 | **+3** |
+| r1 | `sympy-17630` | 34 | VERIFY | +22 | **+2** |
+| r1 | `sympy-18211` | 19 | IMPLEMENT | +7 | −13 |
+| r2 | `pylint-4551` | 38 | VERIFY | +26 | **+6** |
+| r2 | `sympy-17630` | 35 | VERIFY | +23 | **+3** |
+| r2 | `sympy-18211` | 15 | IMPLEMENT | +3 | −17 |
+
+**落段分布：VERIFY 5 · IMPLEMENT 2**，而在 Implement 段动手的两次**是同一条实例**（`sympy-18211`）。
+**把它去掉，Implement 段动手数 = 0/14。**
+
+【原文 `agent/staged.py` 的 `STAGE_TOOLS`】Verify 段相对 Implement 段唯一的差别是**摘掉 `run_python`**；
+`apply_patch` 在两段都可用。→ 首刀的时间点与「**能跑脚本的工具被摘掉**」重合（+2/+3/+2/+6/+3 轮），
+**不与「允许动手」重合**（那是 +22~+26 轮之前的事）。
+
+⚠️ **这是【判断】不是结论**：n=5，且「轮数快用完」与「run_python 被摘」在本设计里**完全共线**
+（Verify 段就是最后 8 轮）。要分开，得另做一个「摘 `run_python` 但不在末段」的跑。
+
+### 8.4 §3.2 反向指标：失败模式换型**发生了**，而且差点被上游标签盖掉
+
+| | 有 patch 且 resolved | **有 patch 但没过** | 空 patch |
+| --- | ---: | ---: | ---: |
+| 基线三跑（A 组 0/24 动手） | 0 | **0** | 24 |
+| P4 r1 | 2 | **2** | 4 |
+| P4 r2 | 2 | **1** | 5 |
+
+有 patch 但没过的三条，逐条开日志核过：
+
+| 实例 | harness 标签 | `failure_reasons` | 日志实际 | 归因 |
+| --- | --- | --- | --- | --- |
+| `sphinx-11510`(r1) | unresolved | — | F2P `test_include_source_read_event` 挂 | 错 patch |
+| `pylint-8898`(r1) | **ambiguous** | `missing_module` | **`1 failed, 19 passed`**，挂的是 F2P `test_csv_regex_error - DID NOT RAISE` | **错 patch** |
+| `pylint-4551`(r2) | **ambiguous** | `no_tests_collected` | **`ImportError: cannot import name 'get_annotation' from 'pylint.pyreverse.utils'`**，收集中断 | **错 patch，且更坏 —— 把整个测试收集打断了** |
+
+⚠️ **两条 `ambiguous` 都不是环境问题，是 Agent 自己的 patch 打的。**
+`pylint-4551` 的 patch 改的正是 `pylint/pyreverse/utils.py` 与 `writer.py`，删掉了测试模块要导入的 `get_annotation`。
+
+⚠️ **口径陷阱（新，必须记）**：`agent/report.py:11` 与 `:40` 的注释把 `E2_ambiguous` 写成
+「harness 自己的 infra_failure / ambiguous 单列，**那是环境的锅**」。这对 harness 的 `ambiguous` **不成立** ——
+【原文 `SWE-bench/swebench/harness/infra_failure.py:22,25`】`TIER_ENVIRONMENT` 与 `TIER_AMBIGUOUS` 是两个 tier，
+【原文 `SWE-bench/swebench/harness/reporting.py:105-108`】只有 `TIER_ENVIRONMENT` 进 `infra_failure_ids`，
+**其余进 `ambiguous_failure_ids`**。照那句注释读数，本次最重要的反向指标会被抹掉 2/3。
+
+**上游自己在同一处写明了**【原文 `SWE-bench/swebench/harness/infra_failure.py:23-24`，紧挨 `TIER_AMBIGUOUS` 的注释】：
+
+> Can come from either a broken environment or **a bad patch**; reported separately
+> so it is **never mistaken for a confirmed environment fault**.
+
+—— 上游特意把这一桶单列，就是**为了不让人把它当成已确认的环境故障**；我们的注释正好把它当成了环境故障。
+
+✅ **项目自己的分桶没错**：`agent/report.py --run-id p4-r1/p4-r2` 把这两条都归成 **`M2_fail_to_pass`**，
+与逐条读日志一致。**错的是直读 `results.json` 的 `ambiguous_failure_ids`**（09-22 头一版探针正是这么读的）
+**和 report.py 里那句注释**。
+
+**按 §3.2 的读法**：错 patch 从 0 增到 3/16，**失败模式换型确实发生了**；但空 patch 仍占 9/16，
+**「空 patch → 错 patch」是发生了而不是「大量增加」**，主判据过线与它并列写，不许只写前者。
+
+### 8.5 §3.5 合规性（独立判据）：判「**指令没被遵守**」
+
+A 组每轮打三把尺子（口径不新造：行为层 = `switch_point` 的 ARCH 判定去掉 FIX 短路；
+词面层 = `areason_markers` 的 `MARKERS["ARCH"]`）：
+
+| 跑 | 段 | 轮数 | 行为层 ARCH | **可探测轮内** | 词面层 ARCH | 有 reasoning |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| r1 | COLLECT | 96 | 2 (2.1%) | **2/59 = 3.4%** | 19 (19.8%) | 93.8% |
+| r1 | IMPLEMENT | 159 | 25 (15.7%) | **25/85 = 29.4%** | 83 (52.2%) | 96.9% |
+| r1 | VERIFY | 55 | 0 (0.0%) | 0/0 (n/a) | 24 (43.6%) | 98.2% |
+| r2 | COLLECT | 96 | 0 (0.0%) | **0/57 = 0.0%** | 19 (19.8%) | 91.7% |
+| r2 | IMPLEMENT | 152 | 25 (16.4%) | **25/80 = 31.2%** | 78 (51.3%) | 96.1% |
+| r2 | VERIFY | 56 | 0 (0.0%) | 0/0 (n/a) | 27 (48.2%) | 96.4% |
+
+**三把尺子同向：Implement 段的考古率不但没下降，而且比 Collect 段高一个量级。**
+→ 按 §3.5 预锁的判法：**结论是「指令没被遵守」**，与「分阶段无效」是两回事，
+「分阶段能不能拦住它」**仍然未被检验**。这是 **㊸ 的第二次实证** —— 摘掉 `search_code`
+只换掉了考古的**通道**，模型改用 `run_python` 考古（29.4% / 31.2%）。
+
+⚠️ **判别量被自变量本身掐掉了，所以必须补量**（㊿ 第三次）：
+行为层的 ARCH 有两条探测通道（`search_code` 查询里的 PR 词面 + `run_python` 代码的 `classify`），
+而**自变量正是「Implement 段起摘掉 `search_code`」**：
+
+- COLLECT 段：两条通道都在
+- IMPLEMENT 段：**只剩 `run_python` 一条**
+- VERIFY 段：**两条都没有**（工具表里既无 `search_code` 也无 `run_python`）
+  → **「Verify 段行为层考古率 0%」是仪器读数，不是事实**；同段词面层仍有 43.6% / 48.2%
+
+所以「按轮算」的跨段比较是拿两把不同灵敏度的尺子比读数。补量后（分母只取**能被探测到的轮**）
+结论**更强**而不是更弱：**3.4% / 0% → 29.4% / 31.2%**。
+
+### 8.6 §3.3 对照两条：**不报警**，但按预锁读法不算证据
+
+| 实例 | s5-mine | p2-mine | p2-rerun | **p4-r1** | **p4-r2** |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `django-14631` | 0 | 5 | 2 | **5**（首刀 18，RESOLVED） | **0**（空 patch） |
+| `sphinx-9711` | 2 | 0 | 2 | **3**（首刀 23，RESOLVED） | **2**（首刀 13，RESOLVED） |
+
+§3.3 锁的读法是「两跑全为 0 才算警报」—— **没有一条两跑全 0，不报警**。
+但同一条也锁了：**没掉不算「没弄坏」的证据**（分母 2，它自己在五跑里就摆 0/5/2/5/0）。
+`django-14631` 一跑 RESOLVED、一跑空 patch，**它自己的方差仍然能吃掉一次修正的效果**（⑦⑨）。
+
+§2.1 记过的**对照缺口**在本跑成立：两条的自然首刀是 25/38 与 None/22，Collect 闸（轮 1–12）切不到它们
+→ 「有没有把本来会动手的弄坏」本跑只覆盖得了 Implement 段那个成分，**Collect 闸的误伤仍记【未知】**。
+
+### 8.7 §五 C24 的第一个真跑缓存读数
+
+| 跑 | 轮数 | None 轮 | hit token | miss token | **命中率** | **峰值 prompt** |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| p4-r1 | 377 | **0** | 6,099,072 | 1,528,576 | **80.0%** | **54,850** |
+| p4-r2 | 361 | **0** | 5,819,647 | 1,409,944 | **80.5%** | **52,159** |
+
+- **命中率这一面，模拟说对了**：基线整跑直读 58.8%【原文 `EVAL-P2-rerun.md:125-143`】→ 本次 80.0/80.5%，
+  未命中占比 41.2% → 20.0%，**相对降 51.5%**，模拟给的是「未命中字符 −53.9%」。
+  ⚠️ 口径不同（字符 vs token、25 条 vs 10 条），只能说**同量级同方向**，不是逐项对上。
+- **峰值这一面，模拟低估了 61%**：`EVAL-cache-sim` 预测攒 5 条峰值 27,985 → **34,178**，实测 **54,850**。
+  当初选「攒 5 条」而不是攒 20/40 的理由之一就是「峰值不撞 64K 窗口」——
+  **实测离 64K 只剩 14% 余量**，这条理由的安全边际比当初以为的薄得多。
+  ⚠️ 不可比因素已知且未剥离：模拟跑在 25 条**旧**轨迹上，没有 C23 插入的 `tools_changed_message`，
+  也没有三段指令本身的字数。**单独归因仍【未知】。**
+- ⚠️ 照 §五 最后一条：本跑 §2.1 ⒜ 选的是「骨架 `system_prompt` + 段指令**尾部追加**」，
+  **没有**中途改 `messages[0]`，所以不存在「每进一段作废整棵前缀树」那种代价。
+
+### 8.8 仪器：一处已纠正
+
+**已纠正的错误（不静默改）**：09-22 头一版临时探针（`~/p4_probe.py`、`~/p4_read.py`）把
+`CUT = (12, 32, 40)` 和 `STAGE_TOOLS` **手抄**了一份进脚本，于是它报的「工具表违规 0」
+**只证明「落盘 == 那份手抄表」，不证明「落盘 == 真正发出去的表」** ——
+与 09-22 Codex 二审 ⒝「指纹盖不住真正发出去的东西」**同型，同一天犯了第二次**。
+
+已改：`scripts/p4_read.py` 与 `scripts/p4_analysis.py` 一律 `from agent.staged import STAGE_TOOLS, stage_of` 直读。
+**重算后违规数仍为 0**（两跑全部步，`tools_declared` 与 `agent/staged.py` 的表逐列表相同）——
+**结论没变，但证据链换了一条能站住的。**
+
+### 8.9 §六【未知】结算
+
+| # | 【未知】 | 本跑之后 |
+| --- | --- | --- |
+| 1 | 三段各切几轮 | **仍【未知】**，且 §8.3 给了反证：Implement 段那 20 轮基本没被用来动手 |
+| 2 | 分阶段能不能拦住 `deepseek-flash` | **仍未被检验** —— §3.5 判「指令没被遵守」 |
+| 3 | 换指令的实现形状对缓存的影响幅度 | **部分答了**（58.8% → 80.0/80.5%），但与 C23 混在一起，单独归因仍【未知】；峰值比模拟高 61% |
+| 4 | 对照两条的检验能力 | **答了，而且是否定的** —— `django-14631` 两跑 5 / 0，自己从 RESOLVED 摆到空 patch |
+| 5 | `tools_changed_message` 让前缀在哪一轮断 | **仍【未知】，但已经可查** —— 数据在库里，按轮看 miss 分布即可，**$0** |
+
+### 8.10 本跑新增可讲的事
+
+- **(53) 「过线」和「按设计过线」是两个问题。** 主判据只锁了动手数，没锁在哪动手。7/16 过线，
+  但 5/7 的首刀发生在「能跑脚本的工具被摘掉」之后 2–6 轮，而不是「允许动手」之后的第 1 轮。
+  预注册挡得住改阈值，挡不住**把量当成机制**。
+- **(54) 判别量被自变量本身掐掉。** 合规性判据要比 Implement 段与 Collect 段的考古率，
+  而自变量正是「在 Implement 段摘掉 `search_code`」—— 两段的探测灵敏度不一样，Verify 段更是结构性为 0。
+  **先问「这把尺子在这个段还量得到吗」**，再看读数。补量后结论更强：3.4%/0% → 29.4%/31.2%。
+- **(55) 上游工具给的标签会把你自己的失败摘出去。** harness 把两条标成 `ambiguous`、
+  `failure_reasons` 写 `missing_module` / `no_tests_collected`，看起来像环境问题；
+  逐条开日志，一条是正常跑完的 `1 failed, 19 passed`，另一条是自己的 patch 删掉了
+  `get_annotation` 导致收集中断。**两条都是 Agent 自己打的。** 而 `report.py` 的注释正把
+  `ambiguous` 说成「环境的锅」。**上游的桶名不是你的归因。**
+- **(56) 模拟对了率、错了峰值。** `EVAL-cache-sim` 的未命中降幅（−53.9% 字符 vs 实测 −51.5% token）
+  同量级同方向，但峰值 34,178 vs 实测 54,850，**低估 61%**，而当初选攒 5 条的理由之一正是峰值安全。
+  **省钱那一面容易模拟，撞窗口那一面不容易。**
+
+### 8.11 复核命令
+
+```bash
+cd ~/swe-bench-eval
+
+# 主表 + §3.1 主判据（段边界与工具表从 agent/staged.py 直读，不手抄）
+PYTHONPATH=. python3 scripts/p4_read.py
+
+# §3.5 合规性（含两处补量）+ §3.2 四格 + §五 缓存读数
+PYTHONPATH=. python3 scripts/p4_analysis.py
+
+# §3.1 的 p 值
+python3 -c "from math import comb; print(round(comb(16,7)/comb(40,7), 5))"
+
+# §8.4 两条 ambiguous 的日志实际（不是标签）
+# logs/ 在 .gitignore 里；scripts/p4_collect_eval.sh 已把这两份日志原文摊进 results/
+tail -c 400 results/evaluation/p4-r1/pylint-dev__pylint-8898.test_output.txt
+grep -n 'ImportError' results/evaluation/p4-r2/pylint-dev__pylint-4551.test_output.txt
+
+# §8.4 项目自己的归因表（两条都归 M2_fail_to_pass，不是 E2_ambiguous）
+PYTHONPATH=. .venv/bin/python -m agent.report --run-id p4-r1
+PYTHONPATH=. .venv/bin/python -m agent.report --run-id p4-r2
+
+# §8.4 harness 的 ambiguous 到底是什么（不是环境的锅）
+sed -n '22,26p' SWE-bench/swebench/harness/infra_failure.py
+sed -n '104,109p' SWE-bench/swebench/harness/reporting.py
+
+# §8.1 余额（收敛读数）
+bash ~/s5_balance.sh
+```
