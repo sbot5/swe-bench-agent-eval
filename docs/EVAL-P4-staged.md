@@ -111,9 +111,10 @@ run_tests git_diff finish`，**集合对、顺序错**。`select_tool_schemas` �
    ⚠️ 照 §四 原话，这条**证不了本次改动** —— 假模型不看工具表【原文 `tests/gold_replay.py:72-75`】，
    它只保证「不传 `stage_notes`/`tool_policy` 时老路径没变」
 3. ✅ 冒烟**改成 $0 版**：`scripts/p4_preflight.py` 用假模型跑满 40 步，打印指纹、逐步声明的工具集、三段指令原文，
-   并自检 **6 条全过**（工具表那条比的是列表不是集合）（`messages[0]` 全程没被改写 · 三条段指令按序到位、一条不多一条不少 ·
-   其余 system 消息只有工具变更通知 · 每步工具集 = 该步所属段 · Collect 拿不到 `apply_patch` ·
-   Implement/Verify 拿不到 `search_code`）。⚠️ 它**证不了模型会不会照做** —— 那是真跑才能答的，判据在 §三
+   并自检 **6 条全过**：`messages[0]` 全程没被改写 · 三条段指令按序到位、一条不多一条不少 ·
+   其余 system 消息只有工具变更通知 · **每步发出去的工具表 = 该步所属段的工具表（比列表不比集合）** ·
+   Collect 拿不到 `apply_patch` · Implement/Verify 拿不到 `search_code`。
+   ⚠️ 它**证不了模型会不会照做** —— 那是真跑才能答的，判据在 §三
 4. ⬜ 10 条 `NetworkMode=none` 全覆盖 —— **跑时执行**，逐容器 `docker inspect`
 5. ✅ 指纹已写进本节
 6. ✅ 余额 **09-22 11:51 北京重读 ¥36.73**，与 09-20 收敛读数**同值** → 本次全程 $0 得到独立确认。
